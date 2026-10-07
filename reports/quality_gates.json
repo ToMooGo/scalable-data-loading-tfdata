@@ -1,0 +1,54 @@
+{
+  "model_version": "2",
+  "passed": true,
+  "checks": [
+    {
+      "check": "test RMSE (USD)",
+      "value": 50751.08348759626,
+      "limit": 60000.0,
+      "passed": true
+    },
+    {
+      "check": "test R-squared",
+      "value": 0.8023752933286719,
+      "limit": 0.75,
+      "passed": true
+    },
+    {
+      "check": "RMSE gain over the linear baseline (%)",
+      "value": 24.665579625167066,
+      "limit": 10.0,
+      "passed": true
+    },
+    {
+      "check": "training/serving skew, max |difference| (USD)",
+      "value": 0.0,
+      "limit": 0.05,
+      "passed": true
+    },
+    {
+      "check": "unseen category gives a finite answer",
+      "value": 1.0,
+      "limit": 1.0,
+      "passed": true
+    },
+    {
+      "check": "missing number is replaced by the median",
+      "value": 1.0,
+      "limit": 1.0,
+      "passed": true
+    },
+    {
+      "check": "registered model reproduces the training run's RMSE, |difference| (USD)",
+      "value": 0.0,
+      "limit": 1.0,
+      "passed": true
+    },
+    {
+      "check": "test RMSE vs champion (USD, may be at most tolerance worse)",
+      "value": 50751.08348759626,
+      "limit": 51758.32677671523,
+      "passed": true
+    }
+  ]
+}

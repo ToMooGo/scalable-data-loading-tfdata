@@ -1,0 +1,197 @@
+{
+  "run": {
+    "parent_run_id": "984780484cff43a096012d3e32c16fdb",
+    "config": "configs/full_flow_config.yaml",
+    "model_version": "2",
+    "split_sizes": {
+      "n_train": 12384,
+      "n_valid": 4128,
+      "n_test": 4128
+    },
+    "data_sha256": "8a3727f4cf54ac1a327f69b1d5b4db54c5834ea81c6e4efc0d163300022a685e",
+    "config_md5": "52af19cb6182f7bb8a9df4d3e805ca2c",
+    "git_commit": "unknown",
+    "config_file": "configs/full_flow_config.yaml"
+  },
+  "parts": {
+    "A": {
+      "name": "A-csv-pipeline",
+      "params": {
+        "batch_size": 32,
+        "repeats": 5,
+        "step_ms_values": [
+          0.0,
+          4.0
+        ],
+        "buffer_sizes": [
+          100,
+          1000,
+          10000
+        ],
+        "n_csv_shards": 20,
+        "n_readers": 5
+      },
+      "metrics": {
+        "n_train_rows": 12384,
+        "pipeline_max_abs_diff_inputs": 2.9357334667690083e-06,
+        "pipeline_max_abs_diff_targets": 2.365112301561112e-07,
+        "strict_serial_examples_per_s": 13411.861515303797,
+        "strict_book_examples_per_s": 20605.705717916517,
+        "default_serial_examples_per_s": 21483.600404116212,
+        "default_book_examples_per_s": 19168.04561980147,
+        "numpy_examples_per_s": 354717.7169930727,
+        "numpy_resident_mb": 1.487071,
+        "prefetch_speedup_at_slowest_step": 1.287807976644335,
+        "slowest_step_ms": 4.0,
+        "shuffle_spearman_no_shuffle": 0.9999523849562361,
+        "shuffle_spearman_buffer_max": 0.06078219895162419,
+        "shuffle_buffer_max": 10000
+      }
+    },
+    "B": {
+      "name": "B-tfrecord",
+      "params": {
+        "batch_size": 32,
+        "repeats": 5,
+        "scale_copies": [
+          1,
+          10,
+          100
+        ]
+      },
+      "metrics": {
+        "csv_bytes": 856778,
+        "csv_gz_bytes": 287248,
+        "tfrecord_bytes": 3576363,
+        "tfrecord_gz_bytes": 483662,
+        "tfrecord_over_csv": 4.174200317935335,
+        "tfrecord_gz_over_csv": 0.5645126275417903,
+        "csv_examples_per_s": 16602.176381230864,
+        "tfrecord_single_examples_per_s": 17963.687033303653,
+        "tfrecord_batch_examples_per_s": 60155.438563853495,
+        "tfrecord_gz_batch_examples_per_s": 62194.97486801592,
+        "csv_tfrecord_max_abs_diff": 0.0,
+        "csv_tfrecord_category_equal": 1.0,
+        "wire_formula_matches_all": 1.0,
+        "wire_file_bytes_exact": 1.0,
+        "corruption_all_detected": 1.0,
+        "missing_feature_default_ok": 1.0,
+        "scale_rows_max": 1238400,
+        "scale_stream_growth_mb_max": 30.707712000000015,
+        "scale_pandas_growth_mb_max": 181.55929600000002,
+        "scale_stream_examples_per_s_max": 60433.981707688145
+      }
+    },
+    "C": {
+      "name": "C-features",
+      "params": {
+        "feature_sets": [
+          "numeric only",
+          "+ ocean one-hot",
+          "+ ocean embedding",
+          "+ income buckets",
+          "+ age x ocean",
+          "+ grid one-hot (400)",
+          "+ grid embedding (400)",
+          "+ hashed grid (1000)",
+          "all features"
+        ],
+        "n_seeds": 5,
+        "heads": {
+          "linear": {
+            "hidden": [],
+            "learning_rate": 0.005,
+            "epochs": 150,
+            "patience": 15
+          },
+          "mlp": {
+            "hidden": [
+              64,
+              64
+            ],
+            "learning_rate": 0.002,
+            "epochs": 100,
+            "patience": 10
+          }
+        },
+        "select_head": "mlp",
+        "best_feature_set": "+ hashed grid (1000)",
+        "batch_size": 128,
+        "compression": "GZIP"
+      },
+      "metrics": {
+        "n_feature_sets": 9,
+        "n_seeds": 5,
+        "best_feature_set_valid_rmse": 52001.81015625,
+        "best_feature_set_test_rmse": 50668.459375,
+        "layer_check_max_abs_diff": 2.9357334667690083e-06,
+        "hash_cells": 400.0,
+        "hash_buckets": 1000.0,
+        "hash_cells_with_training_rows": 133.0,
+        "hash_distinct_buckets_all_cells": 335.0,
+        "hash_expected_distinct_buckets_all_cells": 329.8140939932599,
+        "hash_distinct_buckets_occupied_cells": 130.0,
+        "hash_occupied_cells_sharing_a_bucket": 6.0,
+        "hash_training_rows_in_shared_buckets": 94.0,
+        "hash_training_rows_in_shared_buckets_pct": 0.7590439276485789,
+        "linear_baseline_valid_rmse": 68856.0546875,
+        "linear_best_valid_rmse": 63211.153125,
+        "linear_n_significant_gains": 6,
+        "mlp_baseline_valid_rmse": 52615.59140625,
+        "mlp_best_valid_rmse": 52001.81015625,
+        "mlp_n_significant_gains": 1
+      }
+    },
+    "D": {
+      "name": "D-tfds-mnist",
+      "params": {
+        "source": "mirror",
+        "epochs": 5,
+        "n_seeds": 3,
+        "n_shards": 10,
+        "element_spec": "([None, 28, 28, 1], 'uint8')"
+      },
+      "metrics": {
+        "tfds_source_is_mirror": 1.0,
+        "train_batches": 1875,
+        "test_batches": 313,
+        "n_train_images": 60000,
+        "raw_bytes_per_image": 838.0,
+        "all_encodings_lossless": 1.0,
+        "tfds_load_test_accuracy": 0.9757333397865295,
+        "tfrecord_test_accuracy": 0.9763999978701273
+      }
+    },
+    "E": {
+      "name": "E-deployed-model",
+      "params": {
+        "feature_set": "+ hashed grid (1000)",
+        "hidden": [
+          64,
+          64
+        ],
+        "compression": "GZIP",
+        "seed": 42
+      },
+      "metrics": {
+        "test_rmse": 50751.08348759626,
+        "test_mae": 34573.225659747455,
+        "test_r2": 0.8023752933286719,
+        "baseline_linear_test_rmse": 67367.72279534355,
+        "skew_max_abs_usd": 0.0,
+        "unknown_category_ok": 1.0,
+        "missing_value_ok": 1.0,
+        "valid_rmse": 52495.2109375,
+        "valid_r2": 0.7953967698117853,
+        "baseline_mean_test_rmse": 114164.41208435342,
+        "roundtrip_max_abs_usd": 0.0,
+        "epochs_run": 55,
+        "best_epoch": 45,
+        "train_seconds": 17.719055659999867,
+        "n_params": 13697,
+        "rows_with_missing_value": 49,
+        "rows_outside_training_range": 3
+      }
+    }
+  }
+}
