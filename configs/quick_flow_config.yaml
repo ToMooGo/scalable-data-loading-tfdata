@@ -1,0 +1,43 @@
+# Fast variant (a few minutes) for CI, demos and the integration test.
+extends: full_flow_config.yaml
+
+# its own folder: reports/ holds the committed results of the full run and is not overwritten
+reports:
+  dir: reports/quick
+  figures_dir: reports/quick/figures
+  tables_dir: reports/quick/tables
+
+part_a:
+  repeats: 1
+  step_ms_values: [0, 4]
+  prefetch_step_ms_values: [0, 4]
+  buffer_sizes: [100, 10000]
+
+part_b:
+  repeats: 1
+  scale_copies: [1, 5]
+
+part_c:
+  feature_sets: ["+ ocean one-hot", "+ grid one-hot (400)", "all features"]
+  n_seeds: 2
+  heads:
+    linear: {hidden: [], learning_rate: 0.005, epochs: 20, patience: 5}
+    mlp: {hidden: [64, 64], learning_rate: 0.002, epochs: 20, patience: 5}
+
+part_d:
+  n_train: 6000
+  n_shards: 4
+  epochs: 1
+  n_seeds: 1
+  repeats: 1
+
+part_e:
+  epochs: 20
+  patience: 5
+  n_samples: 50
+
+eval:
+  gates:
+    max_test_rmse_usd: 80000
+    min_test_r2: 0.6
+    min_gain_over_linear_pct: 0

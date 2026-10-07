@@ -1,0 +1,14 @@
+# python run_flow.py --config configs/monitor_flow_config.yaml
+extends: full_flow_config.yaml
+flow: monitor
+
+monitor:
+  window_hours: 168                  # look at the last 7 days of predictions
+  min_predictions: 20                # too few requests -> no verdict
+  max_unknown_category_pct: 1.0      # the model has never seen such a place
+  max_out_of_range_pct: 5.0          # a value outside the training min..max
+  max_missing_rate_pct: 5.0          # about 1% of training rows miss total_bedrooms
+  max_feature_shift_std: 0.5         # mean of a column moved by half a training std
+  max_category_tvd: 0.2              # ocean_proximity mix differs from training
+  max_prediction_shift_std: 0.5      # mean predicted price moved by half a training std
+  exclude_source_prefixes: ["sample-", "ci", "deploy-canary"]   # UI demo rows, CI smoke tests, the deploy check

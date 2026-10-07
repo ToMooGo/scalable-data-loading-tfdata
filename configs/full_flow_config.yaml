@@ -1,0 +1,90 @@
+# ---------------------------------------------------------------------------
+#  One config, one command:  python run_flow.py --config configs/full_flow_config.yaml
+#  train  ->  evaluate (quality gates, champion vs challenger)  ->  deploy
+#  ${VAR:default} values are read from the environment (set in docker-compose.yml).
+# ---------------------------------------------------------------------------
+flow: full            # full | train | eval | deploy | monitor
+seed: 42              # every random_state, shuffle seed and split
+resume: ${RESUME:false}   # true = reuse saved results of finished parts (interrupted long run, same code)
+
+data:
+  cache_dir: ${DATA_CACHE:data}        # housing.csv is downloaded once (SHA-256 checked)
+  work_dir: ${WORK_DIR:data/work}      # CSV and TFRecord shards are written here
+  test_size: 0.2
+  valid_fraction: 0.25                 # of the rest: 60% train / 20% validation / 20% test
+  shards: {train: 20, valid: 10, test: 10}
+
+mlflow:
+  tracking_uri: ${MLFLOW_TRACKING_URI:sqlite:///mlflow.db}
+  experiment: scalable-data-loading-tfdata
+
+database:             # predictions logged by the API
+  url: ${DATABASE_URL:sqlite:///app.db}
+
+reports:
+  dir: reports
+  figures_dir: reports/figures
+  tables_dir: reports/tables
+
+# --- A: the Data API on sharded CSV files (Ch. 13, "The Data API") ------------
+part_a:
+  batch_size: 32             # the book's default
+  repeats: 5                 # every timing is the median of 5 passes after a warm-up pass
+  step_ms_values: [0, 4]     # simulated training step per batch: 0 = reading only
+  prefetch_step_ms_values: [0, 1, 2, 4, 8]
+  buffer_sizes: [100, 1000, 10000]
+
+# --- B: the TFRecord format (Ch. 13, "The TFRecord Format") ------------------
+part_b:
+  batch_size: 32
+  repeats: 5
+  scale_copies: [1, 10, 100]   # the training set repeated N times: memory and speed at scale
+
+# --- C: preprocessing inside the model (Ch. 13, "The Features API") ----------
+part_c:
+  feature_sets: null           # null = all nine sets of features.py
+  n_seeds: 5
+  compression: GZIP            # training reads the GZIP-compressed TFRecord shards
+  batch_size: 128
+  select_head: mlp             # the head whose best feature set is reported as "best"
+  heads:                       # the same features feed a linear model and a small neural network
+    linear: {hidden: [], learning_rate: 0.005, epochs: 150, patience: 15}
+    mlp: {hidden: [64, 64], learning_rate: 0.002, epochs: 100, patience: 10}   # patience = early stopping
+
+# --- D: TensorFlow Datasets (Ch. 13, "The TensorFlow Datasets Project") ------
+part_d:
+  data_dir: ${TFDS_DATA_DIR:data/tfds}
+  source: ${MNIST_SOURCE:auto}   # auto | tfds | mirror (checksum-verified GitHub mirror)
+  n_train: null                  # null = all 60,000 images
+  n_shards: 10
+  epochs: 5
+  n_seeds: 3
+  repeats: 3
+
+# --- E: the model that gets deployed -----------------------------------------
+part_e:
+  feature_set: auto            # auto = the set with the lowest mean validation RMSE of the 'select_head' model in part C, or a name from features.py
+  compression: GZIP
+  hidden: [64, 64]
+  batch_size: 128
+  learning_rate: 0.002
+  epochs: 100
+  patience: 10
+  n_samples: 200               # held-out rows shipped with the model for the UI's example button
+
+# --- Evaluation: a candidate is only deployed if it passes every gate --------
+eval:
+  gates:
+    max_test_rmse_usd: 60000
+    min_test_r2: 0.75
+    min_gain_over_linear_pct: 10      # at least 10% lower RMSE than Chapter 2's linear model
+    max_skew_usd: 0.05                # request path vs tf.data path, largest difference
+    max_reproduction_diff_usd: 1.0    # registered model vs the RMSE logged at training time
+  champion_tolerance_pct: 1.0         # challenger may be at most 1% worse than the champion
+
+# --- Deployment -------------------------------------------------------------
+deploy:
+  alias: champion
+  api_url: ${API_URL:http://localhost:8000}
+  require_api: ${REQUIRE_API:false}   # fail the flow if the API cannot be reloaded
+  reload_retries: 10
