@@ -43,7 +43,7 @@ jobs:
       - name: Unit + API tests (offline, synthetic data)
         run: python -m pytest -m "not integration" -q
       - name: Cache the housing data and MNIST
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: data
           key: data-housing-mnist-v1
