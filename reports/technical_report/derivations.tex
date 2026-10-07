@@ -1,0 +1,152 @@
+\section{Mathematical notes}
+\label{sec:math}
+
+This section derives the formulas that the experiments use. Most of them are compared with a measurement in the sections above; Sections~\ref{sec:math-embed} and~\ref{sec:math-paired} are definitions and algebra, and the batch diversity is a definition.
+
+\subsection{Prefetching and the time per batch}
+
+Let $t_{\mathrm{in}}$ be the time the input pipeline needs to prepare one batch (read, shuffle, parse, batch) and $t_{\mathrm{s}}$ the time of one training step. Without prefetching the two alternate, so the time for $N$ batches is
+\begin{equation}
+T_N^{\mathrm{serial}} = N\,(t_{\mathrm{in}} + t_{\mathrm{s}}) .
+\end{equation}
+
+With \texttt{prefetch(1)} a background thread prepares batch $k$ while the training step works on batch $k-1$. Write $p_k$ for the time at which batch $k$ is ready and $f_k$ for the time at which step $k$ ends, with $f_0 = 0$. The model assumes that the thread starts preparing batch $k$ as soon as the one-batch buffer is free, that is when step $k-1$ starts (batch 1 starts at time 0, so $p_1 = t_{\mathrm{in}}$), and that every batch takes exactly $t_{\mathrm{in}}$. Step $k$ starts when both the previous step has ended and batch $k$ is ready, so
+\begin{equation}
+f_k = \max(f_{k-1},\, p_k) + t_{\mathrm{s}} .
+\end{equation}
+
+\emph{Case $t_{\mathrm{in}} \le t_{\mathrm{s}}$ (the step is the bottleneck).} Batch $k$ starts to be prepared when step $k-1$ starts, which is at time $f_{k-1} - t_{\mathrm{s}}$, and it is ready at $p_k = f_{k-1} - t_{\mathrm{s}} + t_{\mathrm{in}} \le f_{k-1}$, that is before step $k-1$ ends. Hence $p_k \le f_{k-1}$ for $k \ge 2$, and the maximum is always $f_{k-1}$. Only the first batch has to be waited for: $f_1 = t_{\mathrm{in}} + t_{\mathrm{s}}$ and $f_k = f_{k-1} + t_{\mathrm{s}}$, so
+\begin{equation}
+f_N = t_{\mathrm{in}} + N\,t_{\mathrm{s}} = t_{\mathrm{in}} + (N-1)\,t_{\mathrm{s}} + t_{\mathrm{s}} .
+\end{equation}
+
+\emph{Case $t_{\mathrm{in}} > t_{\mathrm{s}}$ (the input is the bottleneck).} The consumer is faster than the producer, so the buffer is never full and the producer never waits: $p_k = k\,t_{\mathrm{in}}$. Step $k-1$ ends at $f_{k-1} = (k-1)\,t_{\mathrm{in}} + t_{\mathrm{s}} < k\,t_{\mathrm{in}} = p_k$ (this is the induction hypothesis, and it holds for $k=1$ with $f_0 = 0$), so each step starts the moment its batch is ready, $f_k = p_k + t_{\mathrm{s}} = k\,t_{\mathrm{in}} + t_{\mathrm{s}}$, and
+\begin{equation}
+f_N = t_{\mathrm{in}} + (N-1)\,t_{\mathrm{in}} + t_{\mathrm{s}} .
+\end{equation}
+
+Both cases have the form $f_N = t_{\mathrm{in}} + (N-1)\max(t_{\mathrm{in}}, t_{\mathrm{s}}) + t_{\mathrm{s}}$. Dividing by $N$ and letting $N$ grow gives the time per batch
+\begin{equation}
+\lim_{N\to\infty} \frac{f_N}{N} = \max(t_{\mathrm{in}},\, t_{\mathrm{s}}) ,
+\end{equation}
+which is the overlap shown in the book's Figure 13-3. This is the dashed line in Figure~\ref{fig:prefetch}, with $t_{\mathrm{in}}$ taken from the measurement with no training step.
+
+\subsection{How well a shuffle buffer mixes sorted data}
+
+A shuffle buffer of size $B$ works as follows: it is first filled with the first $B$ elements of the stream; then, for every output, one of the $B$ elements in the buffer is chosen uniformly at random and sent out, and the next element of the stream takes its place. Suppose the stream is sorted, so the element with input index $i$ has target rank $i$, for $i = 1, \dots, n$.
+
+Consider an element that has just entered the buffer. At each later output it is the chosen one with probability $p = 1/B$, independently of the earlier outputs. The number $G$ of outputs until it leaves therefore has a geometric distribution,
+\begin{equation}
+\Pr(G = g) = (1-p)^{g-1} p, \qquad
+\mathrm{E}[G] = \frac{1}{p} = B, \qquad
+\mathrm{Var}(G) = \frac{1-p}{p^{2}} = B(B-1) .
+\end{equation}
+The buffer holds the first $B$ elements before the first output, and after $m$ outputs it has taken in elements up to $B + m$. Element $i$ can therefore first be chosen at output number $i - B + 1$ (for $i > B$), and it is output at position $(i - B + 1) + (G_i - 1)$, that is
+\begin{equation}
+O_i = i - B + G_i = i + \varepsilon_i , \qquad \mathrm{E}[\varepsilon_i] = 0, \qquad \mathrm{Var}(\varepsilon_i) = B(B-1) \approx B^{2},
+\end{equation}
+where the start and the end of the stream, which behave slightly differently, are ignored.
+
+The order correlation reported in the experiments is the Spearman correlation between output position and target. The positions $O_i$ are not exactly ranks, so the Spearman correlation differs slightly from the Pearson correlation of $i$ and $O_i$ that is computed here (by about 0.003 for $B/n = 0.08$ in the experiment); I use the Pearson value as the approximation. Treat $\varepsilon_i$ as independent of $i$. For $i$ uniform on $1,\dots,n$,
+\begin{equation}
+\mathrm{Var}(i) = \frac{n^{2}-1}{12} \approx \frac{n^{2}}{12} .
+\end{equation}
+Then $\mathrm{Cov}(i, O_i) = \mathrm{Var}(i)$ and $\mathrm{Var}(O_i) = \mathrm{Var}(i) + B^{2}$, so
+\begin{equation}
+\begin{aligned}
+\rho &= \frac{\mathrm{Cov}(i, O_i)}{\sqrt{\mathrm{Var}(i)\,\mathrm{Var}(O_i)}}
+= \frac{\mathrm{Var}(i)}{\sqrt{\mathrm{Var}(i)\,\bigl(\mathrm{Var}(i) + B^{2}\bigr)}} \\
+&= \frac{1}{\sqrt{1 + B^{2}/\mathrm{Var}(i)}}
+\approx \frac{1}{\sqrt{1 + 12\,(B/n)^{2}}} .
+\end{aligned}
+\end{equation}
+
+The approximation needs $B$ much smaller than $n$: the noise $\varepsilon_i$ is cut off by the ends of the stream when $B$ is comparable to $n$, and a buffer as large as the data gives a uniformly random order, with $\rho = 0$. The report therefore compares the formula with the measurement only for $B \le n/4$.
+
+\paragraph{Batch diversity.} The second quantity in Figure~\ref{fig:shuffle} is
+\begin{equation}
+D = \frac{\overline{s}}{s_{\mathrm{all}}}, \qquad
+\overline{s} = \frac{1}{K}\sum_{k=1}^{K} \mathrm{sd}(y_{k,1},\dots,y_{k,b}),
+\end{equation}
+the mean standard deviation of the target inside a batch of $b$ examples, divided by the standard deviation $s_{\mathrm{all}}$ of the whole training set. Batches that look like random draws have $D$ close to 1; consecutive rows of sorted data have $D$ close to 0. Gradient descent works best on the first kind of batch, which is why the book shuffles.
+
+\subsection{Size of a TFRecord file}
+
+The book gives the definition of the \texttt{Example} message and says that a record holds a length, a checksum of the length, the data and a checksum of the data. The byte counts below, the rules of the Protocol Buffers encoding, are not in the book; they are tested by Table~\ref{tab:wire}, where the prediction equals the real size for every record.
+
+A \texttt{tf.train.Example} is a Protocol Buffers message. A length-delimited field with a payload of $L$ bytes occupies
+\begin{equation}
+F(L) = 1 + v(L) + L \quad\text{bytes},
+\end{equation}
+where the 1 is the tag (field numbers below 16 need one byte) and $v(L)$ is the number of bytes of $L$ written as a varint: $v(L) = 1$ for $L < 128$, $v(L) = 2$ for $128 \le L < 16384$.
+
+A numeric feature holds a \texttt{float\_list} with one 4-byte float, stored packed. The packed field is $F(4) = 6$ bytes, the \texttt{float\_list} field around it is $F(6) = 8$ bytes, and this is the \emph{Feature} message. A text feature of $s$ bytes is a \texttt{bytes\_list} holding one string, a Feature of $F(F(s))$ bytes. The features are entries of a map from a name to a Feature. An entry with a key of $k$ bytes and a Feature of $f$ bytes has the payload $F(k) + F(f)$, and itself occupies $F\bigl(F(k) + F(f)\bigr)$ bytes in the map. With $E$ the sum of the entry sizes over all features of one row, the serialised row is
+\begin{equation}
+S = F(E) .
+\end{equation}
+A missing number is left out of the message, which removes its entry from $E$.
+
+A TFRecord file stores each serialised row as a header (8 bytes for the length and 4 bytes for the CRC of the length), the $S$ bytes of data and a footer (4 bytes for the CRC of the data), so every record carries 16 bytes of framing besides $S$:
+\begin{equation}
+\text{file size} = \sum_{r=1}^{R} \bigl(S_r + 16\bigr) .
+\end{equation}
+The experiment computes this sum from the rows without writing a file and compares it with the real file size, byte for byte (Table~\ref{tab:wire}).
+
+\paragraph{A worked example.} The nine numeric names have $9 + 8 + 18 + 11 + 14 + 10 + 10 + 13 + 18 = 111$ bytes in total, and the name \texttt{ocean\_proximity} has 15. A numeric entry has a key of $k$ bytes and a Feature of $f = F(F(4)) = 8$ bytes, so its payload is $F(k) + F(8) = (k + 2) + 10$ and the entry is $F(k + 12) = k + 14$ bytes. The nine numeric entries together have $111 + 9 \cdot 14 = 237$ bytes. The entry of the category, with a string of $s$ bytes, has the payload $F(15) + F(F(F(s))) = 17 + (s + 6)$ and is $F(s + 23) = s + 25$ bytes. With all numbers present $E = 237 + s + 25 = 262 + s$, and because $E \ge 128$ the length of $E$ takes two bytes, so $S = E + 3 = 265 + s$. For \texttt{NEAR OCEAN} ($s = 10$) this gives $S = 275$, the largest size in Table~\ref{tab:wire}. For \texttt{INLAND} ($s = 6$) without \texttt{total\_bedrooms}, whose entry has $14 + 14 = 28$ bytes, $E = 237 - 28 + 31 = 240$ and $S = 243$, the smallest size in the table.
+
+The two CRCs are what detects a flipped byte in the uncompressed file; for the GZIP file the corruption test does not show whether the error came from these checksums or from the decompression.
+
+\subsection{Hashing the location grid into buckets}
+
+The 20 by 20 grid has $n = 400$ cells. The book hashes a crossed feature into $m = 1{,}000$ buckets; it notes that too few buckets cause collisions and that more buckets need a larger embedding table. If the hash behaves like a uniform random function, the number $K$ of cells that land in one given bucket is binomial,
+\begin{equation}
+K \sim \mathrm{Binomial}\!\left(n, \tfrac{1}{m}\right), \qquad
+\Pr(K = k) = \binom{n}{k}\left(\tfrac{1}{m}\right)^{k}\left(1 - \tfrac{1}{m}\right)^{n-k} .
+\end{equation}
+The expected number of buckets that hold exactly $k$ cells is $m \Pr(K = k)$; this is the second set of bars in Figure~\ref{fig:grid}. A bucket is empty with probability $(1 - 1/m)^{n}$, so the expected number of occupied buckets is
+\begin{equation}
+\mathrm{E}[\text{occupied}] = m\left[1 - \left(1 - \tfrac{1}{m}\right)^{n}\right] = 1000\,\bigl[1 - 0.999^{400}\bigr] \approx 329.8 ,
+\end{equation}
+(the number of occupied buckets is a sum of $m$ indicator variables, each equal to 1 with probability $1 - (1-1/m)^n$, and the expectation of a sum is the sum of the expectations), so about $400 - 329.8 = 70.2$ cells are expected to share a bucket with an earlier cell. A given cell shares its bucket with at least one of the other 399 cells with probability $1 - 0.999^{399} \approx 0.33$. In this project the same cells collided in repeated calls of the \texttt{HashedCrossing} layer; I did not check other versions of Keras. What matters for the model is how many \emph{training rows} fall in colliding cells, which the experiment reports because most of the 400 cells hold few rows or none.
+
+\subsection{An embedding is a one-hot vector times a matrix}
+\label{sec:math-embed}
+
+Let a categorical feature take values $1, \dots, V$ and let $\mathbf{e}_j \in \{0,1\}^{V}$ be the one-hot vector of value $j$ (a 1 in position $j$, zeros elsewhere). An embedding of dimension $d$ is a matrix $W \in \mathbb{R}^{V \times d}$ whose row $j$ is the learned vector for value $j$. Multiplying the one-hot vector by the matrix selects that row:
+\begin{equation}
+\mathbf{e}_j^{\top} W = \sum_{i=1}^{V} (\mathbf{e}_j)_i\, W_{i,:} = W_{j,:} .
+\end{equation}
+So a dense layer without a bias applied to a one-hot input is the same as an embedding lookup, and the lookup is cheaper because it reads one row instead of multiplying $V$ numbers. The gradient of a loss $\mathcal{L}$ with respect to the matrix is
+\begin{equation}
+\frac{\partial \mathcal{L}}{\partial W} = \mathbf{e}_j \left(\frac{\partial \mathcal{L}}{\partial \mathbf{z}}\right)^{\!\top}, \qquad \mathbf{z} = \mathbf{e}_j^{\top} W ,
+\end{equation}
+To see this, write $z_l = \sum_k (\mathbf{e}_j)_k W_{k,l}$, so that $\partial z_l / \partial W_{i,m} = (\mathbf{e}_j)_i\,\delta_{l,m}$, and use the chain rule:
+\begin{equation}
+\frac{\partial \mathcal{L}}{\partial W_{i,m}} = \sum_l \frac{\partial \mathcal{L}}{\partial z_l}\,(\mathbf{e}_j)_i\,\delta_{l,m} = (\mathbf{e}_j)_i\,\frac{\partial \mathcal{L}}{\partial z_m} ,
+\end{equation}
+the $(i,m)$ entry of $\mathbf{e}_j (\partial \mathcal{L}/\partial \mathbf{z})^{\top}$. It is zero except in row $j$, so a plain gradient-descent step changes only the vector of the value that was seen (the optimiser used in the experiments, Adam, also moves other rows through its running averages). For a batch the gradients of the examples add. A test in the project checks the equality of a dense layer on one-hot input and an embedding layer numerically.
+
+\subsection{Comparing feature sets with paired seeds}
+\label{sec:math-paired}
+
+Every feature set is trained with the same $S$ seeds. For a pair of sets $a$ and $b$ and seed $s$, let $r_{a,s}$ and $r_{b,s}$ be the validation RMSE values (the tables of Section~\ref{sec:features} use the validation set for the comparison). Because the same seed fixes the shuffling order and the random numbers that start the training, the errors of the two sets for the same seed are not independent, and the paired differences $d_s = r_{b,s} - r_{a,s}$ remove the part that they share. The mean and the sample standard deviation of the $d_s$ are
+\begin{equation}
+\bar d = \frac{1}{S}\sum_{s=1}^{S} d_s ,
+\qquad
+s_d = \sqrt{\frac{1}{S-1}\sum_{s=1}^{S} \bigl(d_s - \bar d\bigr)^2} ,
+\end{equation}
+and the 95\% confidence interval for the mean difference is the interval of the Student $t$ distribution with $S-1$ degrees of freedom. Chapter 2 of the book applies the same function (\texttt{scipy.stats.t.interval}) to the squared errors of the test instances; here it is applied to the differences between seeds:
+\begin{equation}
+\bar d \;\pm\; t_{S-1,\,0.975}\,\frac{s_d}{\sqrt{S}} .
+\end{equation}
+A difference is called clear in the tables when this interval does not contain 0. The interval describes the variation caused by the seeds only. The data split is the same for all runs, so it does not include the variation that another split would add.
+
+\paragraph{The interval of the test RMSE.} Section~\ref{sec:model} uses the function as Chapter~2 does. Let $q_i = (\hat y_i - y_i)^2$ be the squared error of test row $i$, for $i = 1, \dots, n$, with the mean $\bar q$ and the sample standard deviation $s_q$. The mean $\bar q$ is the mean squared error, so $\sqrt{\bar q}$ is the RMSE. Treat the $q_i$ as independent draws with expectation $\mu$, the mean squared error of the model on new rows. The 95\% interval for $\mu$ is $[a, b]$ with
+\begin{equation}
+a, b = \bar q \;\mp\; t_{n-1,\,0.975}\,\frac{s_q}{\sqrt{n}} .
+\end{equation}
+The square root is increasing, so $a \le \mu \le b$ holds exactly when $\sqrt{a} \le \sqrt{\mu} \le \sqrt{b}$. The interval $[\sqrt{a}, \sqrt{b}]$ therefore contains $\sqrt{\mu}$ whenever $[a, b]$ contains $\mu$, and it is a 95\% interval for the RMSE:
+\begin{equation}
+\left[\sqrt{\bar q - t_{n-1,\,0.975}\,s_q/\sqrt{n}}\,,\; \sqrt{\bar q + t_{n-1,\,0.975}\,s_q/\sqrt{n}}\,\right] .
+\end{equation}
+It is not symmetric about the RMSE, because the square root is not linear. The model is held fixed, so the interval describes only the variation that another sample of $n$ test rows would cause.
