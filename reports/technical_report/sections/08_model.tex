@@ -1,0 +1,85 @@
+\section{Part E: the deployed model}
+\label{sec:model}
+
+\subsection{The model}
+
+The model that is deployed is the neural network with two hidden layers of 64 units on the feature set \texttt{\param{E}{feature_set}}. It takes the raw columns, so its preprocessing layers (the standardisation, the buckets, the hashed cross and the embeddings of Section~\ref{sec:features}) are stored in the same file as its weights. It is trained on the GZIP-compressed TFRecord shards with early stopping on the validation error: it ran for \metric{E}{epochs_run} epochs, the best one being epoch \metric{E}{best_epoch}, and has \metric{E}{n_params} parameters. The validation RMSE is \$\metric{E}{valid_rmse}; this is the run with seed \param{E}{seed} of Part~C (the same seed and the same data give the same result), whereas the \$\val{c:mlp:hashed-grid-1000:valid} of Table~\ref{tab:featmlp} is the mean of \metric{C}{n_seeds} runs, and the two differ by the variation between seeds.
+
+The choice of the feature set is not itself a finding. With the caveat about many intervals of Section~\ref{sec:features}, the comparisons do not show any feature set to be better for the network than the eight numbers alone: the mean validation errors of the nine sets lie between \$\val{c:mlp:valid:min} and \$\val{c:mlp:valid:max}, and the network on the numbers alone, with \val{c:mlp:numeric-only:params} parameters, is \$\val{pair:mlp:num:diff} behind the deployed set, with a paired interval from \val{pair:mlp:num:lo} to \val{pair:mlp:num:hi}. The deployed set was chosen by the stated rule, the lowest mean validation RMSE, so its small advantage should not be read as an effect.
+
+\subsection{Quality on the test set}
+
+The test set was not used to choose the model, the feature set or any setting of the training; the thresholds of the quality gates were set after a first run (Section~\ref{sec:limits}). Two yardsticks are used: always predicting the mean of the training targets, and the model of Chapter~2 of the book without its three combined attributes (median imputation, standardised numbers, one-hot category, linear regression) fitted on the same training rows.
+
+\begin{table}[!htbp]
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+ & Test RMSE (USD) & 95\% interval (USD) \\
+\midrule
+Always the training mean & \metric{E}{baseline_mean_test_rmse} & \\
+Linear model of Chapter 2 & \metric{E}{baseline_linear_test_rmse} & \\
+Deployed model & \metric{E}{test_rmse} & \val{e:rmse:lo} to \val{e:rmse:hi} \\
+\bottomrule
+\end{tabular}
+\caption{Error of the deployed model and of two yardsticks on the \runSplitNTest{} test rows. The interval is computed for the deployed model, whose predictions are stored with the results, by the method of Chapter~2 (Section~\ref{sec:math-paired}).}
+\label{tab:final}
+\end{table}
+
+The deployed model has a test $R^2$ of \metric{E}{test_r2} and a mean absolute error of \$\metric{E}{test_mae}. Its test RMSE is \val{e:gain:linear:pct}\% lower than that of the linear model of Chapter~2 and \val{e:gain:mean:pct}\% lower than that of the mean. As in Chapter~2 of the book, a 95\% confidence interval for this error is computed from the squared errors of the test rows; it runs from \$\val{e:rmse:lo} to \$\val{e:rmse:hi}. It describes only the sampling variation of the \val{e:ntest} test rows: the model, its seed and the split are held fixed.
+
+Chapter~2 of the book notes that the median house values were capped (Section~\ref{sec:data}). On the \val{cap:n} test rows at the largest value, \$\val{cap:value}, the RMSE of the deployed model is \$\val{cap:rmse} and its mean error is \val{cap:mean:err}; on the other \val{cap:rest:n} rows the RMSE is \$\val{cap:rest:rmse}.
+
+Figure~\ref{fig:model} shows the learning curve, the predictions against the actual values, and the error by area type and by income band; the two tables behind the last panels are Tables~\ref{tab:errocean} and~\ref{tab:errincome}.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{e_model_quality.png}
+\caption{The deployed model. (a) RMSE on the training and validation data during training. (b) Predicted against actual value on the test set; the dashed line is a perfect prediction. (c), (d) RMSE on the test set by \texttt{ocean\_proximity} and by income band.}
+\label{fig:model}
+\end{figure}
+
+\begin{table}[!htbp]
+\centering
+\small
+\input{generated/tab_error_ocean.tex}
+\caption{Test error by \texttt{ocean\_proximity}. The mean error is the mean of prediction minus actual value.}
+\label{tab:errocean}
+\end{table}
+
+\begin{table}[!htbp]
+\centering
+\small
+\input{generated/tab_error_income.tex}
+\caption{Test error by income band (median income in tens of thousands of dollars).}
+\label{tab:errincome}
+\end{table}
+
+\subsection{Quality gates}
+
+A registered version is deployed only if it passes the checks of Table~\ref{tab:gates}. The version is loaded from the registry, not taken from the training process, and evaluated on the test rows in two ways: through the \emph{request path}, which sends raw rows to the same function that the API uses, and through the \emph{pipeline path}, which reads the TFRecord shards with \texttt{tf.data}. Their largest difference is the training/serving skew; the gate requires that it is at most \$0.05. Further gates check that an unseen category gives a finite answer, that a missing number gives the same answer as the training median in its place, that the registered file reproduces the error that the training run logged, and that the version is not worse than the current champion by more than 1\%.
+
+\begin{table}[!htbp]
+\centering
+\small
+\input{generated/tab_gates.tex}
+\caption{Quality gates for the deployed version. The thresholds are choices of the project (Section~\ref{sec:limits}), not content of the book.}
+\label{tab:gates}
+\end{table}
+
+The largest difference between the two paths on the test rows is \metric{E}{skew_max_abs_usd} dollars, so there is no skew. A model that is saved, loaded again and used on all test rows gives predictions that are identical to the original (a largest difference of \metric{E}{roundtrip_max_abs_usd} dollars).
+
+\subsection{Serving and monitoring}
+
+The FastAPI service loads the model with the alias \texttt{champion} from the MLflow registry. Its endpoints are \texttt{/predict} for one row, \texttt{/predict/batch} for up to 1,000 rows, \texttt{/health} and \texttt{/ready} for the liveness and the readiness of the service, \texttt{/model-info} for the version and the profile of the training data (value ranges, categories, share of missing values, the location grid), and \texttt{/reload}, which the deploy flow calls to replace the model without restarting the service and which keeps the old model if loading the new one fails. Inputs are validated: impossible values are rejected, while values that are possible but outside the range of the training data are accepted and flagged in the answer, as are missing numbers and unseen categories. Every request is stored in PostgreSQL. The monitor flow reads these requests and reports the share of unseen categories, of values outside the training range and of missing values, and the shift of the mean of each input and of the predictions, measured in training standard deviations. The web page of the service (Figure~\ref{fig:ui}) estimates a price, shows what the preprocessing layers made of the request (the standardised numbers and the cell of the location grid), displays the measurements of the training run, and shows the monitoring.
+
+\begin{figure}[!htbp]
+\centering
+% The screenshot has no resolution entry, so 1 pixel = 1 bp; trim removes the title bar and tabs (top) and the footer line (bottom).
+\includegraphics[width=\textwidth,trim=0 145 0 310,clip]{ui_estimate.png}
+\caption{The estimate page of the service. Top left: the form with the raw columns of a census block and the buttons that load a held-out block or a deliberately damaged copy of one. Top right: the cell of the location grid and the standardised numbers that the preprocessing layers made of the request. Bottom: the estimate, the actual value of the block, and the data-quality checks.}
+\label{fig:ui}
+\end{figure}
+
+\FloatBarrier

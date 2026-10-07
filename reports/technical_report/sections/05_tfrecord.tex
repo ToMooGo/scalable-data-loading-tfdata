@@ -1,0 +1,79 @@
+\section{Part B: the TFRecord format}
+\label{sec:tfrecord}
+
+\subsection{From CSV to TFRecord}
+
+A TFRecord file is a sequence of binary records, and each record here is one serialised \texttt{tf.train.Example}: a Protocol Buffers message that maps feature names to a list of floats, of integers or of byte strings. A housing row becomes an \texttt{Example} with ten features: the eight numbers and the target as float lists of one element, and \texttt{ocean\_proximity} as a byte string. A missing number is not written. The rows are written in the same order and into the same number of files as the CSV shards, once uncompressed and once with GZIP compression (\texttt{tf.io.TFRecordOptions}).
+
+Reading uses \texttt{tf.io.FixedLenFeature} for every feature. A missing number then gets its \emph{default value}, which is set to the training median, exactly as for the CSV pipeline; a test checks that the value that comes out of a record without \texttt{total\_bedrooms} is the training median. The target has no default, so a record without a target raises an error.
+
+The CSV and the TFRecord pipelines return the same data: the largest absolute difference between the numbers they produce is \metric{B}{csv_tfrecord_max_abs_diff}, the categories are equal, and the compressed files hold the same records as the uncompressed ones.
+
+\subsection{The size of a file can be computed}
+
+Section~\ref{sec:math} derives the number of bytes of a serialised \texttt{Example} and of a file from the Protocol Buffers encoding. The experiment computes this number for each of the \val{eq:rows} training rows from its values alone, without writing anything, and compares it with the real length. Table~\ref{tab:wire} shows that every record, and therefore the whole file, has exactly the predicted size. The records have between \val{wire:min} and \val{wire:max} bytes; the differences come from the missing numbers, which are left out, and from the length of the category name.
+
+\begin{table}[!htbp]
+\centering
+\small
+\input{generated/tab_wire.tex}
+\caption{The size of the uncompressed TFRecord file of the training rows, predicted and measured.}
+\label{tab:wire}
+\end{table}
+
+\subsection{Size and reading speed}
+
+Table~\ref{tab:formats} and Figure~\ref{fig:formats} compare five ways of storing and reading the same \val{eq:rows} training rows: the CSV shards, the same shards compressed with GZIP, TFRecord shards parsed one record at a time (\texttt{tf.io.parse\_single\_example}), TFRecord shards parsed a batch at a time (\texttt{tf.io.parse\_example} after \texttt{batch}), and the compressed TFRecord shards parsed a batch at a time. All five use the same settings: five interleaved files, a shuffle buffer of 10,000 examples, \texttt{tf.data.AUTOTUNE} for the reading and parsing threads and for prefetching, one pass and no training step.
+
+\begin{table}[!htbp]
+\centering
+\small
+\input{generated/tab_formats.tex}
+\caption{Size and reading speed of the same training rows in five formats.}
+\label{tab:formats}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{b_formats.png}
+\caption{Size (left) and reading speed (right) of the five formats of Table~\ref{tab:formats}.}
+\label{fig:formats}
+\end{figure}
+
+\paragraph{Size.} An uncompressed TFRecord is \val{fmt:tfr:size} times as large as the CSV, because every record repeats the names of its ten features and adds the framing and the type information of the message, whereas a CSV states the names once in the header. Compression removes this repetition: the GZIP TFRecord is \val{fmt:tfrgz:size} times the size of the CSV. The comparison with the CSV is not the fair one, though. A GZIP-compressed CSV is only \val{fmt:csvgz:size} times the size of the CSV, so the compressed TFRecord is \val{fmt:tfrgz:over:csvgz} times as large as the compressed CSV. TFRecord does not win on size for these data, and the report does not claim that it does.
+
+\paragraph{Speed.} Parsing one record at a time is as fast as reading the CSV (\val{fmt:single:over:csv} times the speed of the CSV, which is within the noise of Section~\ref{sec:csv}). The gain comes from parsing a whole batch of serialised records in one call: it is \val{fmt:batch:over:csv} times as fast as the CSV, and \val{fmt:batch:over:single} times as fast as parsing record by record. The CSV pipeline parses one line per call; a CSV reader that parses a whole batch of lines with one call was not tested, so the factor of \val{fmt:batch:over:csv} does not separate the effect of the format from the effect of batching. All five rows use \texttt{tf.data.AUTOTUNE}, which Section~\ref{sec:csv} found slower than fixed thread counts on this machine, and the ratios were not measured again with fixed counts. The compressed files are read as fast as the uncompressed ones (\val{fmt:batchgz:over:csv} times the speed of the CSV), so on this machine the decompression is not a cost that shows in the measurement.
+
+\subsection{Damaged files are detected}
+
+Every record carries two CRC checksums, one for its length and one for its data (Section~\ref{sec:math}). Table~\ref{tab:corruption} shows what happens when a file that reads correctly is damaged in the middle (one byte flipped) or cut off at 60\% of its length. In all \val{corr:cases} cases tested, for both the uncompressed and the compressed file, reading stops with a \texttt{DataLossError} instead of delivering wrong numbers. In the uncompressed file the flipped byte is caught by the checksums of the record; for the compressed file the test does not show whether the error came from the checksums of the records or from the decompression. This is the result of the run reported here and not a guarantee: the byte at which a file is cut depends on the order in which Protocol Buffers writes the features, and in about one test process in forty a compressed file that was cut at 60\% was read to its end as a shorter file without an error. A pipeline that must not lose records therefore compares the number of records read with the number written, in addition to relying on the checksums.
+
+\begin{table}[!htbp]
+\centering
+\small
+\input{generated/tab_corruption.tex}
+\caption{Reading an intact and a damaged shard of 620 records.}
+\label{tab:corruption}
+\end{table}
+
+\subsection{Scaling up}
+
+The training set is only about 1~MB, so the interesting question is what the two approaches cost when the data are larger. The training shards are repeated $N$ times, for $N = 1$, 10 and 100, giving up to \val{scale:rows:max} rows and \val{scale:csv:max}~MB of CSV, and two ways of reading them are compared, each in a fresh process: one pass through the compressed TFRecord shards with the \texttt{tf.data} pipeline (shuffle buffer of 10,000 examples, batches of \param{B}{batch_size}), and loading all CSV shards into a pandas data frame and standardising it. The memory growth is the increase of the resident memory of the process during the pass.
+
+\begin{table}[!htbp]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\input{generated/tab_scale.tex}
+\caption{Memory and time of one pass over the training set repeated $N$ times.}
+\label{tab:scale}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{b_scale_test.png}
+\caption{Memory growth (left) and reading speed (right) of the streaming pipeline and of pandas when the training set is repeated up to 100 times.}
+\label{fig:scale}
+\end{figure}
+
+The memory of the streaming pipeline grows from \val{scale:growth:stream:min} to \val{scale:growth:stream:max}~MB, while the 100-fold data set grows by a factor of 100; that of pandas grows from \val{scale:growth:pandas:min} to \val{scale:growth:pandas:max}~MB, which is \val{scale:growth:ratio} times as much as the pipeline at the largest size, and it would keep growing with the data. The speed of the pipeline stays between \val{scale:speed:min} and \val{scale:speed:max} examples per second at every size. For the smallest data set the pipeline needs more memory than pandas; a plausible reason, which I did not test, is the fixed cost of the buffers and thread pools of \texttt{tf.data}. Two things must not be overlooked. Pandas is faster in time: loading the \val{scale:rows:max} rows takes \val{scale:pandas:max}~s, a pass of the streaming pipeline takes \val{scale:pass:max}~s, and the two do not do the same work, since the pipeline also shuffles, parses and batches. And the pandas data frame at the largest size still fits in memory comfortably, so these data do not yet show the case in which the streaming approach is the only one that works. They show how the two approaches scale: while the data grow by a factor of 100, the memory of the pipeline grows by a factor of \val{scale:ratio:stream} and that of pandas by a factor of \val{scale:ratio:pandas} (factors computed from the unrounded measurements, so they differ slightly from the ratios of the rounded cells of Table~\ref{tab:scale}).

@@ -1,0 +1,45 @@
+\section{Limits and what is not claimed}
+\label{sec:limits}
+
+\paragraph{Machine and timings.} All timings come from a cloud machine with two CPU cores and no GPU. Absolute numbers depend on the machine; ratios are what to compare. Each timing is the median of several passes after a warm-up pass, but two measurements of the same configuration still differ: within the run of this report the same CSV pipeline was timed twice and gave \val{noise:a} and \val{noise:b} examples per second (Section~\ref{sec:csv}), \val{noise:pct}\% apart. Differences of that size or less between neighbouring rows of a table are not treated as effects. The tables of only one complete run are stored, so the variation between complete runs is not measured here.
+
+\paragraph{Small data.} The housing data has 20,640 rows and takes about 1.4~MB as a CSV file; the training rows alone take about 0.86~MB. An array in memory is faster than any of the streaming pipelines for such data, and the report shows it. The scale test repeats the training set up to 100 times; this tests how memory and speed of the pipeline grow, and no model is trained on the repeated rows. Even the largest repetition fits in the memory of the machine, so the report shows the different growth of memory but not a case in which pandas fails.
+
+\paragraph{Features.} The book's \texttt{tf.feature\_column} API is replaced by Keras~3 preprocessing layers, so the models are not byte-for-byte the models of the book; in particular I did not check whether \texttt{HashedCrossing} assigns the same buckets as the old crossed column, and the collision counts of Section~\ref{sec:features} are those of the layer used here. The comparison of feature sets uses one split of the data, so its intervals describe the variation caused by the seeds and not the variation another split would cause. The feature sets were not tuned: the sizes of the embeddings other than the book's own (2 dimensions for the categories) and the learning rates were set once.
+
+\paragraph{MNIST.} The version of TFDS used here downloads MNIST from a Google Cloud Storage address. When that address cannot be reached (some firewalls and CI runners cannot reach it, and this project was built in such an environment), the four official files are fetched from a public mirror, checked against the official MD5 checksums and passed to the MNIST builder of TFDS, so that everything after the download is the real \texttt{tfds.load}. The route that this run used is \texttt{\param{D}{source}}. The two inputs that are compared in Part D are trained with the same classifier, but the data from \texttt{tfds.load} are used in the order TFDS delivers them (the book says that the training set it returns is already shuffled), while the TFRecord pipeline shuffles with a buffer of 10,000 images. The comparison of their accuracies is a check that the TFRecord files contain the same data, not a measurement of which input is better.
+
+\paragraph{Choices made after looking at results.} The thresholds of the quality gates are choices of the project, set after looking at the results of a first run; they are meant to catch a broken model, not to define a good one. The feature set of the deployed model is chosen by a rule, the lowest mean validation RMSE of the neural network in Part C. The first version of the configuration named the set \texttt{all features} instead; after the comparison showed that this set was not better than the baseline, the configuration was changed to the rule and the deployment was repeated. The test set played no part in this choice. It is used, however, by the quality gates and by the comparison with the champion, and the thresholds of the gates were set after a first run had been evaluated on it. Chapter~1 of the book warns that a model adapted to a test set by repeated measurements is unlikely to do as well on new data. The test numbers of this report are therefore a final report of this run, not a fresh estimate that no decision has seen.
+
+\paragraph{Sources.} The data loading and preprocessing follow Chapter~13 of the book and the housing data, the split and the confidence interval follow its Chapter~2. The MLOps system around them (Prefect, MLflow, FastAPI, PostgreSQL, Docker Compose, the quality gates, the monitoring and the continuous integration) is not in the book; it follows the structure of the example repository cited in the bibliography.
+
+\subsection{What I learned and what I would do next}
+
+Most of what I learned is about measuring. A step of a pipeline has to be timed with the automatic optimisations of \texttt{tf.data} switched off as well as on, because the optimisations hid most of the effect of the book's steps. One statistic can mislead: reading the files in random order gave an order correlation near 0 while every batch still held almost the same targets. A comparison of two formats needs a control: the TFRecord pipeline differed from the CSV pipeline in the format and in the batching at once. And timings from one machine are compared as ratios, with differences of about \val{noise:pct}\% treated as noise.
+
+The next steps follow from what this report did not separate or did not test:
+\begin{itemize}
+\item a CSV reader that parses a whole batch of lines in one call, to separate the effect of the TFRecord format from that of batch-wise parsing (Section~\ref{sec:tfrecord});
+\item the comparison of \texttt{AUTOTUNE} with the book's fixed values on a machine with more cores and with longer passes, since the cause of the slower \texttt{AUTOTUNE} runs was not investigated (Sections~\ref{sec:csv} and~\ref{sec:tfds});
+\item the comparison of feature sets on other splits of the data, so that the intervals include the variation between splits and not only that between seeds (Section~\ref{sec:features});
+\item a test of the explanation, so far untested, of why the network gains little from the grid (that its hidden layers build functions of position from raw latitude and longitude), and an experiment that isolates the effect of the hash collisions (Section~\ref{sec:features});
+\item data that do not fit in memory, which the scale test, in which every repetition fits comfortably, did not reach (Section~\ref{sec:tfrecord}).
+\end{itemize}
+
+\Needspace{14\baselineskip}
+\section{Reproducing the results}
+\label{sec:repro}
+
+The commands are run from the root of the repository. The quick configuration trains on the same data with fewer repetitions and takes a few minutes. It writes its results to \texttt{reports/quick/}, so the committed results of the full run stay as they are. The full configuration, whose results are in this report, took about 45 minutes on the two-core machine that produced it.
+
+\Needspace{7\baselineskip}
+\begin{verbatim}
+make install   # Python 3.12 or newer
+make test      # offline tests
+make quick     # quick configuration; writes reports/quick/
+make train     # full experiment; writes the tables, figures and RESULTS.md
+make report    # tables of the last run to LaTeX, then this PDF
+make up        # the whole stack in Docker (PostgreSQL, MLflow, Prefect, API)
+\end{verbatim}
+
+The run that produced this report used the configuration \texttt{configs/full\_flow\_config.yaml} with seed~\runSeed{} on the data with SHA-256 prefix \texttt{\runDataSha}.

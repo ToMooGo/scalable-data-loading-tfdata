@@ -1,0 +1,116 @@
+\section{Part C: preprocessing inside the model}
+\label{sec:features}
+
+\subsection{From the Features API to Keras layers}
+
+Chapter~13 builds the features of a model with \texttt{tf.feature\_column}: standardised numeric columns, a bucketised column, a categorical column with a vocabulary turned into an indicator (one-hot) column, a crossed column that is hashed, and an embedding column, all joined by a \texttt{DenseFeatures} layer. Keras~3 no longer contains \texttt{DenseFeatures}, so I built the same features with Keras preprocessing layers, which are part of the model (Table~\ref{tab:mapping}). The boundaries, the vocabulary, the 20 by 20 grid and the sizes of the hash tables (100 and 1,000 buckets) are the numbers of the book.
+
+\begin{table}[!htbp]
+\centering
+\small
+\begin{tabular}{L{7.5cm}L{7.1cm}}
+\toprule
+Book (\texttt{tf.feature\_column}) & This project (Keras 3 layers) \\
+\midrule
+\texttt{numeric\_column} with \texttt{normalizer\_fn} & \texttt{Normalization} with the training mean and variance \\
+\texttt{bucketized\_column} & \texttt{Discretization} \\
+\texttt{categorical\_column\_with\_\allowbreak vocabulary\_list} & \texttt{StringLookup}; index 0 is the bucket for unseen values \\
+\texttt{indicator\_column} (one-hot) & the one-hot output mode of the lookup or the discretisation \\
+\texttt{crossed\_column} (hashed) & \texttt{HashedCrossing} \\
+\texttt{embedding\_column} & \texttt{Embedding} \\
+\texttt{DenseFeatures} & \texttt{Concatenate} of the blocks \\
+\bottomrule
+\end{tabular}
+\caption{The Features API of the book and the layers that replace it.}
+\label{tab:mapping}
+\end{table}
+
+Because the layers are part of the model, the model takes the raw columns, and the preprocessing that is used in training is the one that is used when the model is served. The book's TF~Transform section warns about the difference between the two (training/serving skew); here a quality gate checks that the request path and the \texttt{tf.data} path give the same predictions (Section~\ref{sec:model}). The layers that have no learned weights are also tested against a plain NumPy computation of the same features on the validation rows; the largest difference is \metric{C}{layer_check_max_abs_diff}.
+
+\subsection{The features}
+
+Three ideas of the chapter are implemented.
+
+\paragraph{One-hot encoding of a categorical column.} \texttt{ocean\_proximity} has five categories. A \texttt{StringLookup} layer with the five-word vocabulary turns it into a one-hot vector of six elements: the first element is the bucket for any category that the model has not seen, so that an unknown word at serving time gives an answer instead of an error.
+
+\paragraph{A crossed grid of latitude and longitude.} Latitude is cut at 19 equally spaced boundaries from 32 to 42 degrees, which gives 20 intervals of which the first and the last are open-ended, longitude in the same way into 20 intervals with boundaries from $-125$ to $-114$ degrees, and the two are crossed into a grid of $20 \times 20 = 400$ cells. Two forms are used. The exact grid is the outer product of the two one-hot vectors, a one-hot vector of 400 elements. The book's form hashes the pair of indices into 1,000 buckets (with \texttt{HashedCrossing} here); the book says that the number of buckets must be high enough to avoid too many collisions and that a higher number needs more memory for the embedding table. With 400 cells in 1,000 buckets this form does not make the table smaller than the exact grid; I used it because it is the form of the book. Section~\ref{sec:math} computes how many collisions to expect when 400 cells are hashed into 1,000 buckets.
+
+\paragraph{Embeddings.} An embedding replaces a one-hot vector by a short vector of learned numbers: of dimension 2 for the five categories, which is the value of the book, and of dimension 8 for the cells of the grid and 4 for the cross of age and category, which are choices of this project (age is cut into six intervals and crossed with \texttt{ocean\_proximity}, hashed into 100 buckets). The embedding of the exact 400 cells is implemented as a \texttt{Dense} layer without a bias on the one-hot vector, which is the same thing (Section~\ref{sec:math}); the embedding of the hashed cells is an \texttt{Embedding} layer. Section~\ref{sec:math} shows that an embedding is a one-hot vector multiplied by a matrix, and a test in the package checks that a dense layer without a bias on the one-hot input and an embedding give the same output.
+
+\subsection{Feature sets and the experiment}
+
+The nine feature sets of Table~\ref{tab:featuresets} are compared. Each set adds one idea to the baseline, the numbers plus the one-hot \texttt{ocean\_proximity}, except the first, which has the numbers only, and the last, which combines the income buckets, the age cross and the hashed grid. Each set is used in two models: a linear model, which has no hidden layer, so that the quality of the features is visible without a network that could construct features itself, and a small neural network with two hidden layers of 64 units. Every combination is trained with \metric{C}{n_seeds} seeds, with early stopping on the validation error, reading the GZIP-compressed TFRecord shards with \texttt{tf.data}. This makes \metric{C}{n_feature_sets} feature sets $\times$ 2 models $\times$ \metric{C}{n_seeds} seeds trainings. The comparison uses the validation set; the test error is shown for information and is not used to choose.
+
+\begin{table}[!htbp]
+\centering
+\small
+\begin{tabular}{llp{8.6cm}}
+\toprule
+ & Feature set & Inputs of the model \\
+\midrule
+1 & numeric only & the 8 standardised numbers \\
+2 & + ocean one-hot & 1, and the one-hot vector of \texttt{ocean\_proximity} (baseline) \\
+3 & + ocean embedding & 1, and a 2-dimensional embedding of \texttt{ocean\_proximity} \\
+4 & + income buckets & 2, and the one-hot vector of the income bucket (boundaries 1.5, 3, 4.5 and 6) \\
+5 & + age $\times$ ocean & 2, and a 4-dimensional embedding of the hashed cross of age and ocean (100 buckets) \\
+6 & + grid one-hot (400) & 2, and the one-hot vector of the 400 grid cells \\
+7 & + grid embedding (400) & 2, and an 8-dimensional embedding of the 400 grid cells \\
+8 & + hashed grid (1000) & 2, and an 8-dimensional embedding of the 400 cells hashed into 1,000 buckets \\
+9 & all features & 2, the income buckets, the age cross and the hashed grid \\
+\bottomrule
+\end{tabular}
+\caption{The nine feature sets.}
+\label{tab:featuresets}
+\end{table}
+
+Differences between feature sets are tested with paired seeds (Section~\ref{sec:math}): for each seed the two sets use the same seed for the shuffling of the data and for the initialisation, so the difference of their errors removes part of the noise of training. A difference is called clear when the 95\% interval of the mean difference does not contain 0.
+
+\subsection{Results}
+
+Tables~\ref{tab:featlin} and~\ref{tab:featmlp} give, for each feature set, the mean validation RMSE over the \metric{C}{n_seeds} seeds, the paired difference from the baseline with its 95\% interval, and the test RMSE; Figure~\ref{fig:ablation} shows the test RMSE with its interval across seeds.
+
+\begin{table}[!htbp]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\input{generated/tab_features_linear.tex}
+\caption{Linear model on each feature set. Errors in dollars. The baseline is \texttt{+ ocean one-hot}; a negative difference is an improvement, and * marks an interval that excludes 0.}
+\label{tab:featlin}
+\end{table}
+
+\begin{table}[!htbp]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\input{generated/tab_features_mlp.tex}
+\caption{Neural network with two hidden layers of 64 units on each feature set, in the same form as Table~\ref{tab:featlin}.}
+\label{tab:featmlp}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{c_feature_ablation.png}
+\caption{Test RMSE of the nine feature sets for the linear model (left) and the neural network (right): mean over the seeds with the 95\% interval.}
+\label{fig:ablation}
+\end{figure}
+
+\paragraph{Linear model.} The features matter for the linear model. The baseline has a validation RMSE of \$\val{c:linear:base}. Crossing latitude and longitude into the exact grid of 400 cells lowers it by \$\val{c:linear:grid-one-hot-400:diff} (\val{c:linear:grid-one-hot-400:pct}\%), and the two grid forms that use 22 inputs instead of 414, the learned embedding of the 400 cells and the hashed grid, lower it by \$\val{c:linear:grid-embedding-400:diff} and \$\val{c:linear:hashed-grid-1000:diff}. A linear model can make the price depend on the position only linearly in latitude and longitude; the grid gives every cell its own coefficient. All features together lower the error by \$\val{c:linear:all-features:diff} (\val{c:linear:all-features:pct}\%). The income buckets (\$\val{c:linear:income-buckets:diff}) and the cross of age and category (\$\val{c:linear:age-x-ocean:diff}) help little; the one-hot category itself is worth \$\val{c:linear:numeric-only:diff} against the numbers alone, and a 2-dimensional embedding of the category is almost as good as the one-hot vector (\$\val{c:linear:ocean-embedding:diff} worse). For all \val{c:linear:ncompared} comparisons the interval excludes 0, but the intervals are very narrow, because a linear model trained with different seeds ends almost in the same place. They describe the variation caused by the seeds and not what another split of the data would change.
+
+\paragraph{Neural network.} With two hidden layers the baseline is already \val{c:mlp:over:linear:pct}\% better than the linear model (a validation RMSE of \$\val{c:mlp:base}), and the additional features change little. Only one of the \val{c:mlp:ncompared} comparisons has an interval that excludes 0: the hashed grid improves the validation RMSE by \$\val{c:mlp:hashed-grid-1000:diff} (\val{c:mlp:hashed-grid-1000:pct}\%), with an interval from $-$\$\val{c:mlp:hashed-grid-1000:difflo} to $-$\$\val{c:mlp:hashed-grid-1000:diffhi}. All features together are not better than the baseline (a difference of $+$\$\val{c:mlp:all-features:diff}, with an interval that contains 0). A plausible explanation, which I did not test separately, is that the hidden layers can build functions of position from raw latitude and longitude themselves, so that the grid adds less than it does for the linear model. The result of the single interval should be read with care (this is my own reading, not the book's): eight intervals of 95\% were computed for this model, and one that only just excludes 0 is not strong evidence. The set with the lowest mean validation error of the neural network, \texttt{\val{c:mlp:best:name}}, is the one that is deployed (Section~\ref{sec:model}); the rule uses the validation set and not the test set. Compared in the same paired way with the network on the eight numbers alone, the number of the \val{c:mlp:vsnum:n} richer feature sets whose interval shows them to be better is \val{c:mlp:vsnum:nbetter}. Replacing the one-hot grid of 400 cells by an 8-dimensional embedding lowers the mean error from \$\val{c:mlp:grid-one-hot-400:valid} to \$\val{c:mlp:grid-embedding-400:valid} and reduces the parameters from \val{c:mlp:grid-one-hot-400:params} to \val{c:mlp:grid-embedding-400:params}; the paired interval of this difference is from \val{pair:mlp:gridemb:lo} to \val{pair:mlp:gridemb:hi}, so on these data the smaller form was not worse. The paired comparisons of this paragraph and the next were chosen after looking at the tables, so the caveat about many intervals applies to them as well.
+
+\paragraph{Hash collisions of the location cross.} The 400 cells land in \metric{C}{hash_distinct_buckets_all_cells} distinct buckets out of 1,000, so \val{hash:shared:cells} cells share a bucket with a cell that was there first. A uniformly random hash would be expected to use \val{hash:expected} buckets and to cause \val{hash:expected:shared} such sharings (Table~\ref{tab:hash}, Figure~\ref{fig:grid}). Only \metric{C}{hash_cells_with_training_rows} of the 400 cells contain training rows, since the data cover only a part of the rectangle that the grid spans, and of these just \metric{C}{hash_occupied_cells_sharing_a_bucket} share a bucket with another occupied cell; the training rows in these buckets are \val{hash:rows:pct}\% of the data. In this project the same cells collided in repeated calls; I did not check other versions of Keras. The collisions were not isolated in a separate experiment, so I do not claim that they are harmless. For the neural network the hashed grid has the lower mean error (\$\val{c:mlp:hashed-grid-1000:valid} against \$\val{c:mlp:grid-one-hot-400:valid} for the exact grid, a paired interval of the difference from \val{pair:mlp:hash:lo} to \val{pair:mlp:hash:hi}). For the linear model it is \$\val{hash:lin:worse} worse (\$\val{c:linear:hashed-grid-1000:valid} against \$\val{c:linear:grid-one-hot-400:valid}, a paired interval from \val{pair:lin:hash:lo} to \val{pair:lin:hash:hi}), and its mean is \$\val{hash:lin:worse:emb} above that of the embedding of the exact cells, a difference whose paired interval, from \val{pair:lin:hashemb:lo} to \val{pair:lin:hashemb:hi}, contains 0.
+
+\begin{table}[!htbp]
+\centering
+\small
+\input{generated/tab_hash.tex}
+\caption{Hashing the 400 grid cells into 1,000 buckets.}
+\label{tab:hash}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{c_location_grid.png}
+\caption{Left: the number of training rows in each cell of the 20 by 20 grid (light grey: none). Right: the number of buckets that hold $k$ cells, measured and expected for a uniform random hash.}
+\label{fig:grid}
+\end{figure}

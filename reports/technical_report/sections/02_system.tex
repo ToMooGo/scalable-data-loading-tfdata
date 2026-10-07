@@ -1,0 +1,34 @@
+\section{System overview}
+\label{sec:system}
+
+Figure~\ref{fig:architecture} shows the components. The code that Chapter~13 describes lives in a Python package, \texttt{tfdata\_mlops}. Around it there are the services that make it a system rather than a script: Prefect runs the workflows, MLflow records every run and holds the model registry, a FastAPI service serves the registered model together with a small web page, and a PostgreSQL database keeps the predictions that the service has made. The structure of this wrapper follows the public example repository~\cite{example}; the content that is being wrapped, the data loading and preprocessing, comes from the book.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{architecture.png}
+\caption{Components of the system. Each arrow points from the component that calls to the component that it uses; the arrows between the three flows show the order in which they run.}
+\label{fig:architecture}
+\end{figure}
+
+\subsection{Flows}
+
+Four Prefect flows share one configuration file.
+
+The \emph{train flow} prepares the data once, then runs Parts A to E as separate tasks. Every part writes its parameters, metrics and tables to its own nested MLflow run under one parent run. The model of Part E is registered in the MLflow Model Registry together with its lineage: the SHA-256 of the data, the MD5 of the configuration and the git commit (recorded as unknown for the run of this report, which was made outside a git checkout). At the end the flow writes the result tables, the figures and a summary of the run to the \texttt{reports} folder.
+
+The \emph{evaluation flow} loads the registered candidate and re-evaluates it on the test rows that the training run had held out. A candidate passes only if it passes every one of the eight checks of Table~\ref{tab:gates}: five numerical thresholds, two checks of behaviour, and the comparison with the current champion, which may be at most a stated tolerance worse. The \emph{deploy flow} then gives the passing version the alias \texttt{champion} and asks the running service to reload it. The service must then report the new version and answer one canary request, a prediction for a held-out block. If it does not, the alias and the service return to the previous model, and a failed first deployment removes the alias again. When the service cannot be reached at all, the alias stays and the service loads it at its next start or registry check, unless the configuration requires the service, as it does in Docker; then the deployment is rolled back as well. Started alone, the deploy flow evaluates the candidate first, so a version that has not passed the checks is never promoted. The \emph{monitor flow} reads the logged predictions and reports requests that are unlike the training data: unseen categories, values outside the training range, missing values and shifts of the mean measured in training standard deviations.
+
+\subsection{The pipeline that the book describes}
+
+Figure~\ref{fig:pipeline} shows the two data paths of Parts A and B; the models of Parts C and E are trained from the second one. A set of shard files is listed in random order, and five files are open at the same time, their lines interleaved one at a time (the book's \texttt{n\_readers=5}). Whether these files are read by several threads is a separate setting, \texttt{n\_read\_threads}: it is \texttt{None} in the book's function, so the five files are read in turn, and \texttt{AUTOTUNE} in the pipelines that train the models of Parts C and E. A shuffle buffer mixes the lines. Each line is then parsed and standardised, the lines are collected into batches and the next batch is prepared while the current one is used. The right lane is the same idea on TFRecord files: each file is a GZIP-compressed sequence of serialised \texttt{tf.train.Example} messages, which can be parsed one batch at a time instead of one record at a time.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{pipeline.png}
+\caption{The two input pipelines. The left lane is the CSV pipeline of Part A and the right lane the TFRecord pipeline of Part B. Both end in \texttt{model.fit}. Orange edges mark the two steps that swap places between the lanes. Prefetch prepares the next batch in the background while the training step works on the current one.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{Tests and continuous integration}
+
+The package has a test suite that runs without network access or a GPU: it checks the pipeline against pandas, the TFRecord size formula, the damaged-file detection, the equality of a dense layer on one-hot input with an embedding, the quality gates, the drift checks, the deploy flow (canary request and rollback) and the API (validation, reload and rollback). A GitHub Actions workflow runs the style checks and the tests on two Python versions, and then builds the Docker images, starts the stack, runs the whole flow with a reduced configuration and sends a request to the service. Section~\ref{sec:repro} gives the commands.

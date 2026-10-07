@@ -1,0 +1,82 @@
+\section{Part A: the Data API on sharded CSV files}
+\label{sec:csv}
+
+\subsection{The pipeline}
+
+The function \texttt{csv\_reader\_dataset} follows the one in the book. It lists the files in random order and repeats them, keeps five files open at the same time and interleaves their lines, one line from each file in turn (the book's \texttt{n\_readers=5}; each file's header is skipped), shuffles the lines in a buffer, parses each line with \texttt{tf.io.decode\_csv}, collects batches and prefetches. In the parsing step an empty field is replaced by the training median of its column, through the \texttt{record\_defaults} of \texttt{decode\_csv} (the book's defaults are 0; the median is a choice of this project that follows the imputer of Chapter~2), and the eight numbers are standardised with the training mean and standard deviation. The function has an argument for every step, so that each step can be switched off and measured. Reading threads are a separate argument, \texttt{n\_read\_threads}; the book notes that by default \texttt{interleave()} does not use parallelism, and its function leaves this argument at \texttt{None}, as do pipelines 1 to 5 below.
+
+The first test is that the pipeline returns the same numbers as a plain pandas and NumPy computation of the same quantities. On the \val{eq:rows} training rows, of which \val{eq:missing} have a missing number, the largest absolute difference is \metric{A}{pipeline_max_abs_diff_inputs} in the inputs and \metric{A}{pipeline_max_abs_diff_targets} in the targets, which is consistent with the rounding of 32-bit floating-point numbers.
+
+\subsection{Speed}
+
+Each timing is the median of \param{A}{repeats} passes over the training rows (\val{sweep:batches} batches of \param{A}{batch_size}) after one warm-up pass. To see what a consumer that is not instantaneous does to the pipeline, each batch is followed by a simulated training step of 0 ms (reading only) or 4 ms. Two settings of \texttt{tf.data} are compared. In the first, \emph{only the listed steps}, the automatic graph optimisations of \texttt{tf.data} are switched off, so that a step is present only if the pipeline lists it. In the second, \emph{tf.data defaults}, they are left on. The first answers the question ``what does this step do'', the second ``what does a user get''.
+
+Table~\ref{tab:csvspeed} and Figure~\ref{fig:csv} give the speed of six pipelines, each adding one step to the one above, and of the same computation done with pandas and NumPy. Each pass of this baseline reads the CSV shards into one data frame, standardises it and slices shuffled batches, so it holds all of the data in memory but also pays for reading and parsing the files.
+
+\begin{table}[!htbp]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\input{generated/tab_csv_speed.tex}
+\caption{Examples read per second, without a training step and with a training step of 4~ms per batch. Row 5 is the function of the book.}
+\label{tab:csvspeed}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.92\textwidth]{a_csv_throughput.png}
+\caption{Reading speed of the six pipelines of Table~\ref{tab:csvspeed}, without a training step.}
+\label{fig:csv}
+\end{figure}
+
+With only the listed steps and no training step, the pipeline that reads one file at a time and parses serially reads \val{abl:strict:0:1} examples per second. Interleaving five files raises this to \val{abl:strict:0:2}, the shuffle buffer to \val{abl:strict:0:3}, five parsing threads to \val{abl:strict:0:4}, and \texttt{prefetch(1)}, which completes the function of the book, to \val{abl:strict:0:5}. The function of the book is therefore \val{ablr:strict:0:5:1} times as fast as the plain pipeline. The steps in between should not all be read as separate effects: each added step changes the speed by a factor of between \val{gain:strict:0:min} and \val{gain:strict:0:max}, and the noise of the measurement is of that order: within this run the same configuration was timed twice (row~6 with the \emph{tf.data defaults} in Table~\ref{tab:csvspeed}, and the CSV row of Table~\ref{tab:formats}) and gave \val{noise:a} and \val{noise:b} examples per second, \val{noise:pct}\% apart. Differences of that size or less between rows are therefore not treated as effects.
+
+A training step makes prefetching matter. With a step of 4~ms the pipelines without prefetching read between \val{abl:strict:4:min14} and \val{abl:strict:4:max14} examples per second, and \texttt{prefetch(1)} raises the speed by a factor of \val{ablr:strict:4:5:4} to \val{abl:strict:4:5}. The ceiling for a step of 4~ms and batches of \param{A}{batch_size} is \val{bound:4} examples per second, because the step alone takes that long; the function of the book reaches \val{numpy:book:share:4}\% of the speed of the pandas and NumPy computation, \val{numpy:4} examples per second, in the same situation.
+
+Two results are not what the book's description alone would lead one to expect. First, replacing the fixed values of the book (no reading threads, five parsing threads, \texttt{prefetch(1)}) by \texttt{tf.data.AUTOTUNE} for the reading threads, the parsing threads and the prefetching, with the same five interleaved files, did not help on this machine: without a training step it reads \val{abl:strict:0:6} examples per second, a ratio of \val{ablr:strict:0:6:5} to the fixed values, and with a step of 4~ms the ratio is \val{ablr:strict:4:6:5}. The machine has two cores, and I did not investigate the cause further. Second, in the \emph{tf.data defaults} setting the six pipelines are within \val{abl:default:4:spread}\% of each other when there is a training step (\val{abl:default:4:1} examples per second for the plainest and \val{abl:default:4:5} for the function of the book), and without a step the values, from \val{abl:default:0:min} to \val{abl:default:0:max}, do not form a monotone sequence. When the defaults are on, the plain pipeline is already as fast as the full one when there is a training step of 4~ms (a ratio of \val{ablr:default:4:5:1} for the function of the book to the plain pipeline), so the steps of the book show their effect when they are the only optimisation applied. This is why Table~\ref{tab:csvspeed} reports both settings.
+
+The pandas and NumPy computation is faster than any of the streaming pipelines when there is no training step: it delivers \val{numpy:0} examples per second, \val{numpy:over:book:0} times the function of the book. This is a property of the small data set, whose training rows take only about 1~MB. The point of the pipeline is not to beat a computation that loads everything into memory but to keep working when the data no longer fit (Section~\ref{sec:tfrecord}, Table~\ref{tab:scale}).
+
+\subsection{Prefetching and the formula}
+
+Section~\ref{sec:math} shows that with \texttt{prefetch(1)} the time per batch is $\max(t_{\mathrm{in}}, t_{\mathrm{s}})$, where $t_{\mathrm{in}}$ is the time the input pipeline needs for a batch and $t_{\mathrm{s}}$ the time of the training step, and that without prefetching it is $t_{\mathrm{in}} + t_{\mathrm{s}}$. All of these runs read five interleaved files without reading threads and use a shuffle buffer of 10,000 lines, five parsing threads and no automatic optimisation (the \emph{only listed steps} setting), with and without \texttt{prefetch(1)}. The time $t_{\mathrm{in}}$ is measured with no training step and the formulas are then compared with the measurements for steps from 0 to 8~ms (Table~\ref{tab:prefetch}, Figure~\ref{fig:prefetch}).
+
+\begin{table}[!htbp]
+\centering
+\small
+\input{generated/tab_prefetch.tex}
+\caption{Time per batch in milliseconds, measured and from the formulas of Section~\ref{sec:math}, with $t_{\mathrm{in}}$ taken from the measurement with a step of 0~ms.}
+\label{tab:prefetch}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.92\textwidth]{a_prefetch_sweep.png}
+\caption{Time per batch against the length of the training step, with and without prefetching. The dashed lines are the formulas. For a step of 0~ms the two measured series are nearly equal, so their markers overlap.}
+\label{fig:prefetch}
+\end{figure}
+
+The shape of the formula is confirmed: with prefetching the time per batch stays at $t_{\mathrm{in}}$ as long as the step is shorter than $t_{\mathrm{in}}$ and then grows with a slope of one, and without prefetching it grows with a slope of one from the start. Without prefetching, the measured times exceed the formula by \val{sweep:serial:over:min} to \val{sweep:serial:over:max}~ms per batch for steps of 1~ms and more. With prefetching they agree with $t_{\mathrm{in}}$ for steps of 0 and 1~ms (\val{sweep:pf:0} and \val{sweep:pf:1}~ms against \val{sweep:pred:0}~ms) and exceed the formula by \val{sweep:over:min} to \val{sweep:over:max}~ms for steps of 2~ms and more. Possible reasons, which I did not test, are the cost of handing a batch from one thread to the other and the fact that a simulated step that sleeps for a given time takes a little longer than that time. Because the excess is almost constant, the conclusion of the formula, that prefetching saves the smaller of the two times per batch, holds.
+
+\subsection{How well a shuffle buffer mixes sorted data}
+
+Shuffling is tested on the worst case, a training set stored in sorted order. The training rows are sorted by the target, written to 20 files, and read with different pipelines, in batches of 64. The order correlation is the Spearman correlation between the position of an example in the stream and its target: 1 means the stream is still sorted, 0 means that the order is unrelated to the target. The batch diversity is defined in Section~\ref{sec:math}: 0 means that every batch contains almost the same targets, 1 that every batch looks like the whole set.
+
+\begin{table}[!htbp]
+\centering
+\small
+\input{generated/tab_shuffle.tex}
+\caption{Reading sorted data. ``Formula'' is the prediction of Section~\ref{sec:math}, which is compared with the measurement only for buffers of at most a quarter of the \val{eq:rows} rows (here 100 and 1,000). The rows with ``random file order'' or ``interleave'' also shuffle the order of the files; the rows ``buffer'' alone do not. ``Readers'' is the number of files interleaved (\texttt{n\_readers}); none of these pipelines uses reading or parsing threads.}
+\label{tab:shuffle}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{a_shuffle_quality.png}
+\caption{Order correlation (left) and batch diversity (right) for the pipelines of Table~\ref{tab:shuffle}. The diamonds on the left are the predictions of the formula.}
+\label{fig:shuffle}
+\end{figure}
+
+A buffer of 100 rows leaves sorted data almost sorted (correlation \val{shuf:buffer-100:rho}, formula \val{shuf:buffer-100:pred}), and a buffer of 1,000 rows leaves it mostly sorted (\val{shuf:buffer-1000:rho} against the predicted \val{shuf:buffer-1000:pred}). In the \val{shuf:npred} cases in which the formula was compared with the measurement the largest difference is \val{shuf:maxdev}. A buffer of 10,000 rows is \val{shuf:buf10000:frac}\% of the data, beyond the quarter up to which the formula is compared, and reduces the correlation to \val{shuf:buffer-10000:rho}.
+
+The correlation alone can mislead. Reading the files in random order, with no buffer, gives a correlation of \val{shuf:random-file-order-only:rho}, which looks like perfect shuffling, but the batch diversity is only \val{shuf:random-file-order-only:div}: each file is still sorted, so every batch holds almost the same targets. Interleaving five files at once, as the book does, gives a diversity of \val{shuf:interleave-5-files:div} already and, together with a buffer of 10,000 rows, \val{shuf:interleave-5-buffer-10000:div}. This is the reason for the two steps of the book: the shuffling of the file order and the interleaving mix the data coarsely, the buffer mixes it finely.

@@ -1,0 +1,54 @@
+\section{Part D: TensorFlow Datasets and images in TFRecord files}
+\label{sec:tfds}
+
+\subsection{\texttt{tfds.load}}
+
+The last section of Chapter~13 loads MNIST and trains on it with a few lines (the model definition is elided in the book, as is its \texttt{compile} call):
+
+\begin{verbatim}
+dataset = tfds.load(name="mnist", batch_size=32, as_supervised=True)
+mnist_train = dataset["train"].repeat().prefetch(1)
+model.fit(mnist_train, steps_per_epoch=60000 // 32, epochs=5)
+\end{verbatim}
+
+The project makes the first call with the same arguments. The result is a dictionary with a \texttt{train} and a \texttt{test} data set, each already batched, whose elements are a batch of images (28 by 28 pixels, one channel, unsigned bytes) and a batch of labels. The training set has \metric{D}{train_batches} batches of 32 images, the number that the book's \texttt{steps\_per\_epoch} gives for \metric{D}{n_train_images} images, and the test set has \metric{D}{test_batches} batches, the last of which is not full because 10,000 is not a multiple of 32.
+
+The version of TFDS used here downloads the four official MNIST files from a Google Cloud Storage address. Some firewalls and CI runners cannot reach that address, and this project was built in such an environment, so the project can fetch the same four files from a public mirror, compare their MD5 checksums with the official ones and hand them to the MNIST builder of TFDS; everything after the download is then the real \texttt{tfds.load} (Section~\ref{sec:limits}). The route of this run was \texttt{\param{D}{source}}.
+
+\subsection{MNIST stored as TFRecord files}
+
+The book explains that a \texttt{BytesList} can hold any binary data: an image encoded with \texttt{tf.io.encode\_jpeg}, or any tensor turned into a byte string with \texttt{tf.io.serialize\_tensor}. Three encodings of the \metric{D}{n_train_images} training images are compared, each in \param{D}{n_shards} shards, once uncompressed and once with GZIP. The first is the serialised tensor of the book. The second is an encoded image; it is PNG and not the book's JPEG, because PNG is lossless and the pixels that come back can be compared with the original ones. The third, the plain bytes of the pixel array, is an addition of this project (it is not in the book) and the only one that can be decoded for a whole batch at a time, because in the code of this project \texttt{tf.io.decode\_raw} accepts a vector of strings, while \texttt{tf.io.decode\_png} and \texttt{tf.io.parse\_tensor} take one string. For all three encodings, the first 256 training images and their labels come back from the files exactly equal to the originals.
+
+\begin{table}[!htbp]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\input{generated/tab_mnist_formats.tex}
+\caption{Size and reading speed of the MNIST training images in three encodings. Speeds are in images per second, with no training step. ``Parallel'' uses \texttt{tf.data.AUTOTUNE} for reading, decoding and prefetching, ``serial'' uses none of these. A dash marks a combination that does not exist for that encoding.}
+\label{tab:mnistformats}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{d_mnist_formats.png}
+\caption{Size per image (left) and reading speed (right) of the six files of Table~\ref{tab:mnistformats}.}
+\label{fig:mnist}
+\end{figure}
+
+\paragraph{Size.} The sizes are in Table~\ref{tab:mnistformats} and Figure~\ref{fig:mnist}; the factors below are computed from the unrounded sizes. A raw record takes \val{mnist:raw} bytes for \val{mnist:pixels} pixels. The \val{mnist:raw:overhead} bytes in addition are the 16 bytes of framing of the record (Section~\ref{sec:math}) and the \texttt{Example} structure with the names \texttt{image} and \texttt{label}. The serialised tensor takes \val{mnist:tensor:extra} bytes more than the raw bytes (\val{mnist:tensor} bytes), which is the description of type and shape that it carries. A PNG image is \val{mnist:png:over:raw} times as large as the raw bytes (\val{mnist:png} bytes), because PNG compresses a picture that is mostly black. GZIP shrinks the raw and the tensor records to \val{mnist:raw:gz} and \val{mnist:tensor:gz} bytes, factors of \val{mnist:raw:gz:ratio} and \val{mnist:tensor:gz:ratio}, and the PNG records to \val{mnist:png:gz} bytes. The compressed raw record is therefore smaller than the PNG record, with or without GZIP on top of PNG. A plausible reason, which I did not test, is that GZIP is applied to the whole stream of records and can use what repeats from one record to the next, whereas PNG compresses one image at a time.
+
+\paragraph{Speed.} Decoding one record at a time in serial, the six files are read at between \val{mnist:single:min} and \val{mnist:single:max} images per second, which is a spread of \val{mnist:single:spread}\%. Each configuration was timed in one experiment, and in Part~A the same CSV pipeline timed in two experiments of one run differed by \val{noise:pct}\% (Section~\ref{sec:csv}); I therefore do not draw a conclusion about which of the single-record encodings decodes fastest. The result that is large enough to be an effect is the one of Part~B: decoding a whole batch of raw records in one call reads \val{mnist:batch:plain} images per second from the uncompressed files and \val{mnist:batch:gz} from the compressed ones, which is \val{mnist:batch:over:single:plain} and \val{mnist:batch:over:single:gz} times as fast as one record at a time (for the housing rows the factor was \val{fmt:batch:over:single}). As in Part~B, the comparison mixes the effect of batching with that of the encoding, because the other two encodings could not be decoded for a batch at once. The \texttt{AUTOTUNE} variants were slower than their serial counterparts in all \val{mnist:par:n} cases, by factors between \val{mnist:par:over:ser:min} and \val{mnist:par:over:ser:max}, in line with what Part~A found for \texttt{AUTOTUNE} on this two-core machine; I did not investigate the cause.
+
+\subsection{The same classifier from both sources}
+
+A small classifier is trained from the two sources: the batches of \texttt{tfds.load}, used as in the book, and the compressed raw TFRecord files read with a shuffle buffer of 10,000 images and batch-wise decoding. The book elides the layers of its model and uses the optimiser \texttt{sgd}; the classifier here is a choice of the project (the pixels divided by 255, one hidden layer of 128 units, a softmax layer of 10 units, Adam), so its accuracy is not comparable with any number of the book. Both are trained for \param{D}{epochs} epochs of 1,875 batches with the same \metric{D}{n_train_images} training images and with \param{D}{n_seeds} seeds, the two sources sharing the random numbers of the initialisation for each seed. The accuracy is that on the test set after the last epoch; nothing was chosen with it.
+
+\begin{table}[!htbp]
+\centering
+\small
+\input{generated/tab_mnist_fits.tex}
+\caption{Test accuracy of the same classifier trained from the two sources: mean and standard deviation over the seeds.}
+\label{tab:mnistfits}
+\end{table}
+
+The mean accuracies (Table~\ref{tab:mnistfits}) are \val{mnist:acc:tfds} from \texttt{tfds.load} and \val{mnist:acc:tfrecord} from the TFRecord files, and all \val{mnist:acc:n}~$\times$~2 values lie between \val{mnist:acc:min} and \val{mnist:acc:max}. The paired difference (\texttt{tfds.load} minus TFRecord) has a mean of \val{mnist:acc:diff:mean} and a 95\% interval from \val{mnist:acc:diff:lo} to \val{mnist:acc:diff:hi}, which contains 0. With three seeds the interval is wide, so this shows that no difference was detected and not that there is none. It is a check that the TFRecord files lead to the same classifier as the data of TFDS; the exact comparison of the first 256 images (0.4\% of the 60,000) is direct evidence for those images only.
