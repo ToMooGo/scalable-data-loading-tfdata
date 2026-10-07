@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint + tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            services/pipeline/requirements.txt
+            services/api/requirements.txt
+            requirements-dev.txt
+      - name: Install
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m pip install -e .
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Unit + API tests (offline, synthetic data)
+        run: python -m pytest -m "not integration" -q
+      - name: Cache the housing data and MNIST
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: data-housing-mnist-v1
+      - name: Integration test (downloads the data, Prefect + MLflow on the quick config)
+        run: python -m pytest -m integration -q
+
+  docker:
+    name: Docker Compose end-to-end
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 45
+    env:
+      FLOW_CONFIG: configs/quick_flow_config.yaml
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the pipeline as the runner user (it writes into ./reports)
+        run: |
+          echo "HOST_UID=$(id -u)" >> "$GITHUB_ENV"
+          echo "HOST_GID=$(id -g)" >> "$GITHUB_ENV"
+      - name: Validate the compose file
+        run: docker compose config --quiet
+      - name: Build images
+        run: docker compose build
+      - name: Start infrastructure and API
+        run: docker compose up -d --wait postgres mlflow prefect api
+      - name: Train -> evaluate -> deploy (quick config)
+        run: docker compose run --rm pipeline
+      - name: Smoke test the deployed service
+        run: |
+          curl -fsS localhost:8000/ready
+          python3 - <<'PY'
+          import json, urllib.error, urllib.request
+
+          base = "http://localhost:8000"
+
+          def get(path):
+              return json.load(urllib.request.urlopen(base + path))
+
+          def post(path, body):
+              req = urllib.request.Request(
+                  base + path, json.dumps(body).encode(), {"content-type": "application/json"}
+              )
+              return json.load(urllib.request.urlopen(req))
+
+          info = get("/model-info")
+          assert info["model_version"] and len(info["numeric_columns"]) == 8, info.keys()
+
+          # behaviour on 40 held-out rows, not one lucky row: the model must beat the best constant
+          errors, baseline = [], []
+          for seed in range(40):
+              s = get(f"/samples?kind=clean&seed={seed}")
+              p = post("/predict", {**s["row"], "source": "ci"})
+              assert set(p) >= {"price_usd", "quality", "seen", "model_version"}, p.keys()
+              assert 0 < p["price_usd"] < 1_000_000, p
+              errors.append(abs(p["price_usd"] - s["true_price_usd"]))
+              baseline.append(abs(info["target_mean_usd"] - s["true_price_usd"]))
+          mae, const_mae = sum(errors) / len(errors), sum(baseline) / len(baseline)
+          assert mae < 0.85 * const_mae, f"MAE {mae:,.0f} USD is not clearly better than the mean ({const_mae:,.0f})"
+
+          # data-quality flags: the model answers, and says what it had to repair
+          row = get("/samples?kind=missing&seed=1")["row"]
+          assert post("/predict", {**row, "source": "ci"})["quality"]["missing"] == ["total_bedrooms"]
+          row = get("/samples?kind=unseen&seed=1")["row"]
+          assert post("/predict", {**row, "source": "ci"})["quality"]["unknown_category"] is True
+          row = get("/samples?kind=outlier&seed=1")["row"]
+          assert "median_income" in post("/predict", {**row, "source": "ci"})["quality"]["out_of_range"]
+
+          # impossible values are rejected, not predicted
+          bad = {**get("/samples?kind=clean&seed=1")["row"], "latitude": 123}
+          try:
+              post("/predict", bad)
+              raise SystemExit("an impossible latitude was accepted")
+          except urllib.error.HTTPError as err:
+              assert err.code == 422, err.code
+
+          assert get("/monitoring/summary")["n_predictions"] >= 40
+          assert get("/pipeline/summary")["tables"], "the Pipeline results tab has no tables"
+          print(f"smoke test ok: MAE {mae:,.0f} USD against {const_mae:,.0f} for the mean, flags and validation work")
+          PY
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
