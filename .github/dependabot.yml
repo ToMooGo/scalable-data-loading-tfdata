@@ -1,0 +1,23 @@
+# Weekly pull requests for outdated pinned dependencies, base images and GitHub Actions.
+# The pins are shared between requirements files and pyproject.toml: tests/test_dependencies.py
+# fails until a bump is applied everywhere (TensorFlow and Keras must match in both images).
+version: 2
+updates:
+  - package-ecosystem: pip
+    directories:
+      - /                    # pyproject.toml, requirements-dev.txt
+      - /services/pipeline
+      - /services/api
+    schedule: {interval: weekly}
+    groups:
+      tensorflow:
+        patterns: ["tensorflow", "tensorflow-cpu", "keras"]   # one PR: they move together
+  - package-ecosystem: docker
+    directories:
+      - /services/pipeline
+      - /services/api
+      - /services/mlflow
+    schedule: {interval: weekly}
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}
