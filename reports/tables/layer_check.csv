@@ -1,0 +1,5 @@
+feature_set,width,max_abs_diff,blocks
+numeric only,8,2.9357334667690083e-06,numeric (8)
++ ocean one-hot,14,2.9357334667690083e-06,"numeric (8), ocean_onehot (6)"
++ income buckets,19,2.9357334667690083e-06,"numeric (8), ocean_onehot (6), income_bucket (5)"
++ grid one-hot (400),414,2.9357334667690083e-06,"numeric (8), ocean_onehot (6), location (400)"

@@ -1,0 +1,7 @@
+file,case,result,error_detected
+uncompressed,intact,read 620 records,False
+uncompressed,one byte flipped in the middle,DataLossError,True
+uncompressed,truncated at 60%,DataLossError,True
+GZIP,intact,read 620 records,False
+GZIP,one byte flipped in the middle,DataLossError,True
+GZIP,truncated at 60%,DataLossError,True

@@ -1,0 +1,2 @@
+cells,buckets,cells_with_training_rows,distinct_buckets_all_cells,expected_distinct_buckets_all_cells,distinct_buckets_occupied_cells,occupied_cells_sharing_a_bucket,training_rows_in_shared_buckets,training_rows_in_shared_buckets_pct
+400,1000,133,335,329.8140939932599,130,6,94,0.7590439276485789

@@ -1,0 +1,2 @@
+rows,max_abs_diff_numeric,max_abs_diff_target,category_equal,gzip_identical_to_plain
+12384,0.0,0.0,True,True
