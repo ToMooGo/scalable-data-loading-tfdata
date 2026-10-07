@@ -1,0 +1,7 @@
+# Everything needed to run the pipeline, the API, the tests and the notebooks locally.
+-r services/pipeline/requirements.txt
+-r services/api/requirements.txt
+pytest==9.1.1
+ruff==0.16.9
+jupyter==1.1.1
+nbconvert==7.17.1

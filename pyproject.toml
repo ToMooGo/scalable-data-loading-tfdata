@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tfdata-mlops"
+version = "1.0.0"
+description = "Scalable data loading and preprocessing with tf.data and TFRecord, served end-to-end with Prefect, MLflow, FastAPI and PostgreSQL."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Xaysomvang (Tom) Thammavong" }]
+# The same pins as services/*/requirements.txt (tests/test_dependencies.py checks that they agree),
+# so `pip install -r requirements-dev.txt && pip install -e .` installs nothing a second time.
+# tensorflow-cpu has wheels for Linux x86-64 and Windows only; elsewhere the full wheel is used.
+dependencies = [
+    "tensorflow-cpu==2.20.0; (sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'win32'",
+    "tensorflow==2.20.0; (sys_platform != 'linux' or platform_machine != 'x86_64') and sys_platform != 'win32'",
+    "keras==3.15.1",
+    "numpy==2.5.3",
+    "pandas==3.0.6",
+    "scikit-learn==1.9.1",
+    "scipy==1.18.1",
+    "pyyaml==6.0.3",
+    "psutil==7.2.2",
+    "sqlalchemy==2.1.1",
+    "psycopg[binary]==3.3.6",
+    "mlflow-skinny==3.16.1",
+]
+
+[project.optional-dependencies]
+# the training image (services/pipeline/requirements.txt)
+pipeline = [
+    "tensorflow-datasets==4.9.10",
+    "importlib_resources==7.1.0",
+    "matplotlib==3.11.2",
+    "mlflow==3.16.1",
+    "prefect==3.8.7",
+    "httpx==0.28.1",
+]
+# the serving image (services/api/requirements.txt)
+api = ["fastapi==0.142.2", "uvicorn[standard]==0.54.0"]
+# everything for the tests, the notebooks and the linter (requirements-dev.txt)
+dev = [
+    "tfdata-mlops[pipeline,api]",
+    "pytest==9.1.1",
+    "ruff==0.16.9",
+    "jupyter==1.1.1",
+    "nbconvert==7.17.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: end-to-end test that runs the Prefect flows with MLflow on the quick config (slower, downloads MNIST)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::FutureWarning",
+    "ignore:Using `httpx` with `starlette.testclient`",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["notebooks"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["E501", "B008"]

@@ -1,0 +1,134 @@
+# ---------------------------------------------------------------------------
+#  docker compose up --build
+#  -> PostgreSQL, MLflow, Prefect and the model API start, then the `pipeline`
+#     container trains, evaluates and deploys the models (one config, one command).
+#  UI: http://localhost:8000   MLflow: http://localhost:5050   Prefect: http://localhost:4200
+#  The pipeline exits non-zero if a quality gate fails (the old champion keeps serving).
+#  Demo stack: ports are bound to 127.0.0.1 and the default credentials are for local use only.
+# ---------------------------------------------------------------------------
+name: scalable-data-loading-tfdata
+
+x-db-env: &db-env
+  POSTGRES_USER: ${POSTGRES_USER:-mlops}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mlops}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      <<: *db-env
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./services/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${POSTGRES_PORT:-5433}:5432"   # 5433 on the host: no clash with a local Postgres
+    healthcheck:
+      # -h 127.0.0.1: only pass once Postgres accepts TCP (not during the socket-only init phase)
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-mlops} -d app"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mlflow:
+    build: { context: ., dockerfile: services/mlflow/Dockerfile }
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg://${POSTGRES_USER:-mlops}:${POSTGRES_PASSWORD:-mlops}@postgres:5432/mlflow
+    volumes:
+      - mlartifacts:/mlartifacts
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${MLFLOW_PORT:-5050}:5000"
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  prefect:
+    image: prefecthq/prefect:3.8.7-python3.12
+    command: prefect server start --host 0.0.0.0 --port 4200
+    environment:
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://${POSTGRES_USER:-mlops}:${POSTGRES_PASSWORD:-mlops}@postgres:5432/prefect
+      PREFECT_UI_API_URL: http://localhost:${PREFECT_PORT:-4200}/api
+      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${PREFECT_PORT:-4200}:4200"
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4200/api/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  api:
+    build: { context: ., dockerfile: services/api/Dockerfile }
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-mlops}:${POSTGRES_PASSWORD:-mlops}@postgres:5432/app
+      MODEL_ALIAS: champion
+      REPORTS_DIR: /srv/reports
+      REGISTRY_POLL_SECONDS: "60"
+      # fail fast instead of stalling requests if MLflow is down
+      MLFLOW_HTTP_REQUEST_TIMEOUT: "10"
+      MLFLOW_HTTP_REQUEST_MAX_RETRIES: "1"
+      # keep 1: /reload reaches one worker; scale out with replicas (each polls the registry)
+      WEB_CONCURRENCY: ${API_WORKERS:-1}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}           # if set, POST /reload requires X-Admin-Token
+      BIND_ADDR: ${BIND_ADDR:-127.0.0.1}      # the API warns if it is exposed beyond localhost without an ADMIN_TOKEN
+    volumes:
+      - ./reports:/srv/reports:ro        # the "Pipeline results" tab reads the latest run's tables
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${API_PORT:-8000}:8000"
+    depends_on:
+      postgres: { condition: service_healthy }
+      mlflow: { condition: service_healthy }
+    restart: unless-stopped
+
+  pipeline:
+    build: { context: ., dockerfile: services/pipeline/Dockerfile }
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"   # files written to ./reports belong to you, not root
+    command: ["python", "run_flow.py", "--config", "${FLOW_CONFIG:-configs/full_flow_config.yaml}"]
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      PREFECT_API_URL: http://prefect:4200/api
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-mlops}:${POSTGRES_PASSWORD:-mlops}@postgres:5432/app
+      API_URL: http://api:8000
+      REQUIRE_API: "true"
+      MNIST_SOURCE: ${MNIST_SOURCE:-auto}
+      DATA_CACHE: /app/data
+      WORK_DIR: /app/data/work
+      TFDS_DATA_DIR: /app/data/tfds
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      GIT_COMMIT: ${GIT_COMMIT:-unknown}      # recorded with every run (the image has no git)
+    volumes:
+      - ./reports:/app/reports        # figures, metrics.json and RESULTS.md land in the repo
+      - data:/app/data                # housing.csv, shards and the TFDS cache are kept between runs
+    depends_on:
+      mlflow: { condition: service_healthy }
+      prefect: { condition: service_healthy }
+      api: { condition: service_healthy }
+    restart: "no"
+
+  # optional: hourly drift check -> docker compose --profile monitor up -d monitor
+  monitor:
+    build: { context: ., dockerfile: services/pipeline/Dockerfile }
+    profiles: ["monitor"]
+    command: ["python", "-m", "flows.serve_monitor", "--cron", "${MONITOR_CRON:-0 * * * *}"]
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      PREFECT_API_URL: http://prefect:4200/api
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-mlops}:${POSTGRES_PASSWORD:-mlops}@postgres:5432/app
+    depends_on:
+      mlflow: { condition: service_healthy }
+      prefect: { condition: service_healthy }
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  mlartifacts:
+  data:
