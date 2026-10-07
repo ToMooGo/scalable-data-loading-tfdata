@@ -1,0 +1,11 @@
+\begin{tabular}{L{7.0cm}R{2.2cm}R{2.0cm}R{2.6cm}}
+\toprule
+Format and reading & Bytes & Size vs CSV & Examples per second \\
+\midrule
+csv & 856,778 & 1.00 & 16,602 \\
+csv.gz & 287,248 & 0.34 & 16,405 \\
+tfrecord, parse one record at a time & 3,576,363 & 4.17 & 17,964 \\
+tfrecord, parse a batch at a time & 3,576,363 & 4.17 & 60,155 \\
+tfrecord.gz, parse a batch at a time & 483,662 & 0.56 & 62,195 \\
+\bottomrule
+\end{tabular}

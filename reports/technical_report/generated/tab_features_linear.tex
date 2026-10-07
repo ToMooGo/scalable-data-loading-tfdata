@@ -1,0 +1,15 @@
+\begin{tabular}{L{3.9cm}R{1.0cm}R{1.2cm}R{1.3cm}L{4.0cm}R{1.3cm}R{1.0cm}}
+\toprule
+Feature set & Inputs & Params & Valid. RMSE & Diff. from baseline\newline [95\% interval] & Test RMSE & Test $R^2$ \\
+\midrule
+numeric only & 8 & 9 & 69,626 & $+$770 [$+$746, $+$793]* & 68,473 & 0.640 \\
++ ocean one-hot & 14 & 15 & 68,856 & baseline & 67,490 & 0.651 \\
++ ocean embedding & 10 & 23 & 68,902 & $+$46 [$+$2, $+$89]* & 67,462 & 0.651 \\
++ income buckets & 19 & 20 & 67,980 & $-$876 [$-$901, $-$850]* & 66,604 & 0.660 \\
++ age $\times$ ocean & 18 & 419 & 68,580 & $-$276 [$-$309, $-$243]* & 67,149 & 0.654 \\
++ grid one-hot (400) & 414 & 415 & 64,226 & $-$4,630 [$-$4,657, $-$4,602]* & 62,546 & 0.700 \\
++ grid embedding (400) & 22 & 3,223 & 64,583 & $-$4,273 [$-$4,371, $-$4,174]* & 62,787 & 0.698 \\
++ hashed grid (1000) & 22 & 8,023 & 64,675 & $-$4,182 [$-$4,352, $-$4,011]* & 62,846 & 0.697 \\
+all features & 31 & 8,432 & 63,211 & $-$5,645 [$-$5,737, $-$5,553]* & 61,316 & 0.712 \\
+\bottomrule
+\end{tabular}

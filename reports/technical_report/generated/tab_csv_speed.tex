@@ -1,0 +1,15 @@
+\begin{tabular}{L{6.2cm}R{1.95cm}R{1.95cm}R{1.95cm}R{1.95cm}}
+\toprule
+ & \multicolumn{2}{c}{No training step} & \multicolumn{2}{c}{4 ms training step} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Pipeline & Only listed steps & tf.data defaults & Only listed steps & tf.data defaults \\
+\midrule
+1. one file, no shuffle, serial parse & 13,412 & 21,484 & 4,826 & 6,822 \\
+2. + interleave 5 files & 15,632 & 19,019 & 4,792 & 6,851 \\
+3. + shuffle buffer & 16,039 & 19,189 & 4,969 & 6,711 \\
+4. + 5 parse threads & 18,935 & 25,885 & 5,275 & 6,686 \\
+5. + prefetch(1), the book's function & 20,606 & 19,168 & 6,794 & 6,692 \\
+6. + AUTOTUNE threads and prefetch & 15,525 & 15,104 & 6,646 & 6,612 \\
+pandas and NumPy: read the shards, standardise, slice batches & 354,718 & 354,718 & 7,530 & 7,530 \\
+\bottomrule
+\end{tabular}

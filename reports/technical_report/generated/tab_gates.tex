@@ -1,0 +1,14 @@
+\begin{tabular}{p{8cm}rrl}
+\toprule
+Check & Value & Required & Result \\
+\midrule
+test RMSE (USD) & 50,751 & at most 60,000 & pass \\
+test R-squared & 0.802 & at least 0.750 & pass \\
+RMSE gain over the linear baseline (\%) & 25 & at least 10 & pass \\
+training/serving skew, max |difference| (USD) & 0.000 & at most 0.050 & pass \\
+unseen category gives a finite answer & yes & yes & pass \\
+missing number is replaced by the median & yes & yes & pass \\
+reproduces the training RMSE, |difference| (USD) & 0.000 & at most 1.000 & pass \\
+test RMSE against the current champion (USD) & 50,751 & at most 51,758 & pass \\
+\bottomrule
+\end{tabular}

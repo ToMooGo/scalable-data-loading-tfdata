@@ -1,0 +1,14 @@
+\begin{tabular}{llR{2.1cm}R{1.6cm}R{1.6cm}R{1.6cm}R{1.6cm}}
+\toprule
+ & & & \multicolumn{2}{c}{One record at a time} & \multicolumn{2}{c}{A batch at a time} \\
+\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+Encoding & Compression & Bytes/image & Serial & Parallel & Serial & Parallel \\
+\midrule
+raw & none & 838 & 23,461 & 20,452 & 121,449 & 64,376 \\
+raw & GZIP & 173 & 26,791 & 20,369 & 89,173 & 56,684 \\
+png & none & 331 & 23,474 & 19,083 & -- & -- \\
+png & GZIP & 242 & 22,866 & 16,655 & -- & -- \\
+tensor & none & 857 & 27,490 & 21,543 & -- & -- \\
+tensor & GZIP & 173 & 25,460 & 18,205 & -- & -- \\
+\bottomrule
+\end{tabular}

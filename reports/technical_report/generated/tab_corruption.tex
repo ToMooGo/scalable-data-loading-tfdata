@@ -1,0 +1,12 @@
+\begin{tabular}{llll}
+\toprule
+File & Case & Result & Error raised \\
+\midrule
+uncompressed & intact & read 620 records & no \\
+uncompressed & one byte flipped in the middle & DataLossError & yes \\
+uncompressed & truncated at 60\% & DataLossError & yes \\
+GZIP & intact & read 620 records & no \\
+GZIP & one byte flipped in the middle & DataLossError & yes \\
+GZIP & truncated at 60\% & DataLossError & yes \\
+\bottomrule
+\end{tabular}
