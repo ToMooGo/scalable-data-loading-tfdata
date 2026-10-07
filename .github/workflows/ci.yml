@@ -23,7 +23,7 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -58,7 +58,7 @@ jobs:
     env:
       FLOW_CONFIG: configs/quick_flow_config.yaml
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run the pipeline as the runner user (it writes into ./reports)
         run: |
           echo "HOST_UID=$(id -u)" >> "$GITHUB_ENV"
