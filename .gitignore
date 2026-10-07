@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# local MLflow / app state (Docker uses named volumes instead)
+mlflow.db
+mlruns/
+mlartifacts/
+app.db
+*.sqlite
+
+# secrets
+.env
+
+# LaTeX build files
+reports/technical_report/*.aux
+reports/technical_report/*.log
+reports/technical_report/*.out
+reports/technical_report/*.toc
+reports/technical_report/*.synctex.gz
+
+# results of the quick configuration (the committed reports/ come from the full run)
+reports/quick/
+
+# downloaded data and generated shards (re-created by the pipeline)
+data/
