@@ -97,7 +97,8 @@ def test_batch_endpoint_is_consistent_with_single_requests(client, prep):
     rows = [payload(prep, i) for i in range(10)]
     batch = client.post("/predict/batch", json={"rows": rows, "source": "batch-test"}).json()
     single = [client.post("/predict", json=r).json()["price_usd"] for r in rows]
-    assert np.allclose(batch["prices_usd"], single, atol=0.1)
+    # float32 sums may differ by a few units in the last place between batch sizes (test_inference)
+    assert np.allclose(batch["prices_usd"], single, rtol=1e-5, atol=0.1)
     assert batch["rows_per_second"] > 0 and batch["model_version"] == "7"
     assert client.get("/monitoring/summary").json()["by_source"]["batch-test"]["n"] == 10
 

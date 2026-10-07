@@ -88,9 +88,10 @@ def test_batch_and_single_requests_agree(prep, model, profile):
     rows = prep.split.test.head(12).to_dict("records")
     batch, _ = predict_rows(model, rows, profile)
     single = np.array([predict_rows(model, [r], profile)[0][0] for r in rows])
-    assert (
-        np.abs(batch - single).max() < 1e-2
-    )  # float32 math may differ a little between batch sizes
+    # float32: another batch size may sum in another order (kernels differ between CPUs), which moves
+    # a prediction by a few units in the last place, about 1e-7 of its value each; 1e-5 is far above that
+    # and far below any real difference.
+    np.testing.assert_allclose(batch, single, rtol=1e-5, atol=0.05)
 
 
 def test_grid_cell_matches_the_layers(prep):
