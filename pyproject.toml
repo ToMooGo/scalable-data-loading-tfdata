@@ -14,8 +14,8 @@ authors = [{ name = "Xaysomvang (Tom) Thammavong" }]
 # so `pip install -r requirements-dev.txt && pip install -e .` installs nothing a second time.
 # tensorflow-cpu has wheels for Linux x86-64 and Windows only; elsewhere the full wheel is used.
 dependencies = [
-    "tensorflow-cpu==2.20.0; (sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'win32'",
-    "tensorflow==2.20.0; (sys_platform != 'linux' or platform_machine != 'x86_64') and sys_platform != 'win32'",
+    "tensorflow-cpu==2.21.0; (sys_platform == 'linux' and platform_machine == 'x86_64') or sys_platform == 'win32'",
+    "tensorflow==2.21.0; (sys_platform != 'linux' or platform_machine != 'x86_64') and sys_platform != 'win32'",
     "keras==3.15.1",
     "numpy==2.5.3",
     "pandas==3.0.6",
