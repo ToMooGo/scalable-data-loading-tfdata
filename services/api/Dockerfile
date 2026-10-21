@@ -1,5 +1,5 @@
 # Model service + web UI (FastAPI / Uvicorn). Loads models:/housing-price-model@champion from MLflow.
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
