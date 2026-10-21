@@ -1,5 +1,5 @@
 # MLflow tracking server + model registry (PostgreSQL backend, artifacts on a volume).
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 MLFLOW_DISABLE_AGENT_HINT=1
 # SQLAlchemy 2.1 maps postgresql:// to the psycopg (v3) driver, the same one the API and pipeline use
