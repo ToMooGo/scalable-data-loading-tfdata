@@ -2,6 +2,6 @@
 -r services/pipeline/requirements.txt
 -r services/api/requirements.txt
 pytest==9.1.1
-ruff==0.16.9
+ruff==0.16.10
 jupyter==1.1.1
 nbconvert==7.17.1
